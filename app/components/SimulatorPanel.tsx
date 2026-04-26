@@ -151,12 +151,12 @@ export default function SimulatorPanel() {
 
           {/* Summary cards */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard label="Durée" value={`${result.durationSeconds}s`} />
+            <StatCard label="Durée" value={`${result.durationSeconds} secondes`} />
             <StatCard
               label="Cannon"
               value={
                 result.defenses["cannon_1"].destroyedAt !== null
-                  ? `Détruit · t=${result.defenses["cannon_1"].destroyedAt.toFixed(1)}s`
+                  ? `Détruit · t=${result.defenses["cannon_1"].destroyedAt.toFixed(1)} sec`
                   : "Survit"
               }
               accent={result.defenses["cannon_1"].destroyedAt !== null}
@@ -180,7 +180,7 @@ export default function SimulatorPanel() {
                 .map((t) => (
                   <p key={t.instanceId}>
                     <span className="text-slate-300 font-mono">{t.instanceId.toUpperCase()}</span>
-                    {" "}— morte à t={t.destroyedAt!.toFixed(1)}s
+                    {" "}— morte à t={t.destroyedAt!.toFixed(1)} sec
                   </p>
                 ))}
             </div>
