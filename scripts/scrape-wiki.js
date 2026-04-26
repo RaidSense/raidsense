@@ -19,7 +19,25 @@ const http  = require('http');
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
-const TROOPS_TO_SCRAPE = ['Barbarian', 'Giant'];
+// Noms exacts des pages du CoC Wiki Fandom.
+// Vérifiés sur https://clashofclans.fandom.com/wiki/<nom>
+// Giant fonctionne. Barbarian : la page existe mais peut avoir
+// une structure de wikitext différente (tabview, templates imbriqués).
+const TROOPS_TO_SCRAPE = [
+  'Barbarian',      // test prioritaire — vérifier le diagnostic si échec
+  'Archer',
+  'Giant',          // confirmé fonctionnel
+  'Goblin',
+  'Wall Breaker',
+  'Balloon',
+  'Wizard',
+  'Healer',
+  'Dragon',
+  'P.E.K.K.A',     // avec les points
+  'Baby Dragon',
+  'Miner',
+  'Electro Dragon',
+];
 
 const API = 'https://clashofclans.fandom.com/api.php';
 
