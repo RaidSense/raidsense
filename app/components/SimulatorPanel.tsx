@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useMemo } from "react";
 import { TROOPS } from "../../lib/data/troops";
 import { DEFENSES } from "../../lib/data/defenses";
 import { simulateAttack } from "../../lib/engine/calculator";
@@ -14,38 +14,26 @@ import type {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const GRID_SIZE    = 44;
+const CELL         = 14;            // px per tile → 44 × 14 = 616 px
 const DROP_CENTER: Vec2 = { x: 22, y: 22 };
 const DROP_RADIUS  = 5;
-const MAX_TROOP_SLOTS   = 5;
-const MAX_DEFENSE_SLOTS = 8;
+const MAX_TROOP_SLOTS = 5;
+const MAX_DEFENSES    = 8;
 
 const TROOP_ABBREV: Record<string, string> = {
-  "barbarian":      "Ba",
-  "archer":         "Ar",
-  "giant":          "Gi",
-  "goblin":         "Go",
-  "wall-breaker":   "WB",
-  "balloon":        "Bl",
-  "wizard":         "Wz",
-  "healer":         "He",
-  "dragon":         "Dr",
-  "pekka":          "PK",
-  "baby-dragon":    "BD",
-  "miner":          "Mi",
+  "barbarian":      "Ba", "archer":         "Ar", "giant":    "Gi",
+  "goblin":         "Go", "wall-breaker":   "WB", "balloon":  "Bl",
+  "wizard":         "Wz", "healer":         "He", "dragon":   "Dr",
+  "pekka":          "PK", "baby-dragon":    "BD", "miner":    "Mi",
   "electro-dragon": "ED",
 };
 
-// Accent colours per troop-slot position.
 const TROOP_COLORS = [
-  "text-amber-400",
-  "text-sky-400",
-  "text-emerald-400",
-  "text-violet-400",
-  "text-rose-400",
+  "text-amber-400", "text-sky-400", "text-emerald-400",
+  "text-violet-400", "text-rose-400",
 ] as const;
 
-// Fill colours used on the mini-map for each defense type.
-const DEFENSE_MAP_FILL: Record<string, string> = {
+const DEFENSE_FILL: Record<string, string> = {
   "cannon":          "#ef4444",
   "archer-tower":    "#f97316",
   "mortar":          "#eab308",
@@ -57,7 +45,13 @@ const DEFENSE_MAP_FILL: Record<string, string> = {
   "scattershot":     "#ec4899",
 };
 
-// ── Domain types ───────────────────────────────────────────────────────────
+const PALETTE_DEFAULTS: Record<string, number> = {
+  "cannon": 10, "archer-tower": 10, "mortar": 8, "air-defense": 8,
+  "wizard-tower": 8, "x-bow": 5, "inferno-tower": 4,
+  "eagle-artillery": 3, "scattershot": 2,
+};
+
+// ── Types ──────────────────────────────────────────────────────────────────
 
 interface TroopSlot {
   slotId: string;
@@ -66,8 +60,8 @@ interface TroopSlot {
   count: number;
 }
 
-interface DefenseSlot {
-  slotId: string;
+interface PlacedDefense {
+  instanceId: string;
   defenseId: string;
   level: number;
   x: number;
@@ -83,15 +77,15 @@ interface TroopMeta {
   color: string;
 }
 
-// ── Pure helpers ───────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function ringPositions(total: number): Vec2[] {
   if (total === 0) return [];
   return Array.from({ length: total }, (_, i) => {
-    const angle = (2 * Math.PI * i) / total - Math.PI / 2;
+    const a = (2 * Math.PI * i) / total - Math.PI / 2;
     return {
-      x: Math.round((DROP_CENTER.x + DROP_RADIUS * Math.cos(angle)) * 10) / 10,
-      y: Math.round((DROP_CENTER.y + DROP_RADIUS * Math.sin(angle)) * 10) / 10,
+      x: Math.round((DROP_CENTER.x + DROP_RADIUS * Math.cos(a)) * 10) / 10,
+      y: Math.round((DROP_CENTER.y + DROP_RADIUS * Math.sin(a)) * 10) / 10,
     };
   });
 }
@@ -100,66 +94,61 @@ function buildDeployments(slots: TroopSlot[]): {
   deployments: TroopDeployment[];
   meta: TroopMeta[];
 } {
-  const total     = slots.reduce((s, sl) => s + sl.count, 0);
-  const positions = ringPositions(total);
+  const positions = ringPositions(slots.reduce((s, sl) => s + sl.count, 0));
   const deployments: TroopDeployment[] = [];
   const meta: TroopMeta[]              = [];
-  let posIdx = 0;
+  let pi = 0;
 
-  slots.forEach((slot, slotIndex) => {
-    const troop     = TROOPS.find((t) => t.id === slot.troopId)!;
-    const levelData = troop.levels.find((l) => l.level === slot.level)!;
-    const abbrev    = TROOP_ABBREV[slot.troopId] ?? troop.name.slice(0, 2);
-    const color     = TROOP_COLORS[slotIndex % TROOP_COLORS.length];
+  slots.forEach((slot, si) => {
+    const troop = TROOPS.find((t) => t.id === slot.troopId)!;
+    const lData = troop.levels.find((l) => l.level === slot.level)!;
+    const abbr  = TROOP_ABBREV[slot.troopId] ?? troop.name.slice(0, 2);
+    const color = TROOP_COLORS[si % TROOP_COLORS.length];
 
     for (let i = 0; i < slot.count; i++) {
-      const instanceId = `${slot.slotId}_${i}`;
-      deployments.push({ instanceId, troopId: slot.troopId, level: slot.level, dropPosition: positions[posIdx++] });
-      meta.push({ instanceId, slotId: slot.slotId, troopName: troop.name, maxHp: levelData.hp, label: `${abbrev}${i + 1}`, color });
+      const id = `${slot.slotId}_${i}`;
+      deployments.push({ instanceId: id, troopId: slot.troopId, level: slot.level, dropPosition: positions[pi++] });
+      meta.push({ instanceId: id, slotId: slot.slotId, troopName: troop.name, maxHp: lData.hp, label: `${abbr}${i + 1}`, color });
     }
   });
 
   return { deployments, meta };
 }
 
-function buildDefensePlacements(slots: DefenseSlot[]): DefensePlacement[] {
-  return slots.map((s) => ({
-    instanceId: s.slotId,
-    defenseId:  s.defenseId,
-    level:      s.level,
-    position:   { x: s.x, y: s.y },
+function buildDefensePlacements(placed: PlacedDefense[]): DefensePlacement[] {
+  return placed.map((d) => ({
+    instanceId: d.instanceId,
+    defenseId:  d.defenseId,
+    level:      d.level,
+    position:   { x: d.x, y: d.y },
   }));
 }
 
-function clampCoord(v: number): number {
-  return Math.max(0, Math.min(GRID_SIZE - 1, Math.round(v)));
-}
-
-// ── Component ──────────────────────────────────────────────────────────────
+// ── SimulatorPanel ─────────────────────────────────────────────────────────
 
 export default function SimulatorPanel() {
   const [troopSlots, setTroopSlots] = useState<TroopSlot[]>([
     { slotId: "ts-0", troopId: "giant", level: 5, count: 5 },
   ]);
-  const [defenseSlots, setDefenseSlots] = useState<DefenseSlot[]>([
-    { slotId: "ds-0", defenseId: "cannon",       level: 10, x: 22, y: 15 },
-    { slotId: "ds-1", defenseId: "archer-tower",  level: 8,  x: 30, y: 22 },
-    { slotId: "ds-2", defenseId: "mortar",        level: 6,  x: 14, y: 28 },
+  const [placed, setPlaced] = useState<PlacedDefense[]>([
+    { instanceId: "di-0", defenseId: "cannon",       level: 10, x: 22, y: 15 },
+    { instanceId: "di-1", defenseId: "archer-tower", level:  8, x: 30, y: 22 },
+    { instanceId: "di-2", defenseId: "mortar",       level:  6, x: 14, y: 28 },
   ]);
-  const [result, setResult] = useState<SimulationResult | null>(null);
-  const [meta,   setMeta]   = useState<TroopMeta[]>([]);
+  const [palLevels, setPalLevels] = useState<Record<string, number>>(PALETTE_DEFAULTS);
+  const [result, setResult]       = useState<SimulationResult | null>(null);
+  const [meta, setMeta]           = useState<TroopMeta[]>([]);
 
   const totalTroops = troopSlots.reduce((s, sl) => s + sl.count, 0);
 
-  // ── Troop slot handlers ──────────────────────────────────────────────────
-
   function clearResult() { setResult(null); setMeta([]); }
 
+  // Troop handlers
   function updateTroopSlot(slotId: string, patch: Partial<Omit<TroopSlot, "slotId">>) {
     setTroopSlots((prev) => prev.map((s) => {
       if (s.slotId !== slotId) return s;
       const next = { ...s, ...patch };
-      if (patch.troopId !== undefined && patch.troopId !== s.troopId) {
+      if (patch.troopId && patch.troopId !== s.troopId) {
         const t = TROOPS.find((t) => t.id === patch.troopId)!;
         next.level = Math.min(s.level, t.levels.length);
       }
@@ -170,52 +159,36 @@ export default function SimulatorPanel() {
 
   function addTroopSlot() {
     if (troopSlots.length >= MAX_TROOP_SLOTS) return;
-    setTroopSlots((prev) => [...prev, { slotId: `ts-${Date.now()}`, troopId: "barbarian", level: 1, count: 3 }]);
+    setTroopSlots((p) => [...p, { slotId: `ts-${Date.now()}`, troopId: "barbarian", level: 1, count: 3 }]);
     clearResult();
   }
 
   function removeTroopSlot(slotId: string) {
     if (troopSlots.length <= 1) return;
-    setTroopSlots((prev) => prev.filter((s) => s.slotId !== slotId));
+    setTroopSlots((p) => p.filter((s) => s.slotId !== slotId));
     clearResult();
   }
 
-  // ── Defense slot handlers ────────────────────────────────────────────────
-
-  function updateDefenseSlot(slotId: string, patch: Partial<Omit<DefenseSlot, "slotId">>) {
-    setDefenseSlots((prev) => prev.map((s) => {
-      if (s.slotId !== slotId) return s;
-      const next = { ...s, ...patch };
-      if (patch.defenseId !== undefined && patch.defenseId !== s.defenseId) {
-        const d = DEFENSES.find((d) => d.id === patch.defenseId)!;
-        next.level = Math.min(s.level, d.levels.length);
-      }
-      if (patch.x !== undefined) next.x = clampCoord(patch.x);
-      if (patch.y !== undefined) next.y = clampCoord(patch.y);
-      return next;
-    }));
+  // Defense handlers
+  function handlePlace(x: number, y: number, defenseId: string, level: number) {
+    setPlaced((prev) => {
+      const filtered = prev.filter((d) => !(d.x === x && d.y === y));
+      if (filtered.length >= MAX_DEFENSES) return prev;
+      return [...filtered, { instanceId: `d-${Date.now()}`, defenseId, level, x, y }];
+    });
     clearResult();
   }
 
-  function addDefenseSlot() {
-    if (defenseSlots.length >= MAX_DEFENSE_SLOTS) return;
-    setDefenseSlots((prev) => [...prev, { slotId: `ds-${Date.now()}`, defenseId: "cannon", level: 1, x: 22, y: 22 }]);
+  function handleRemove(instanceId: string) {
+    setPlaced((p) => p.filter((d) => d.instanceId !== instanceId));
     clearResult();
   }
-
-  function removeDefenseSlot(slotId: string) {
-    if (defenseSlots.length <= 1) return;
-    setDefenseSlots((prev) => prev.filter((s) => s.slotId !== slotId));
-    clearResult();
-  }
-
-  // ── Simulate ─────────────────────────────────────────────────────────────
 
   function handleSimulate() {
-    const { deployments, meta: newMeta } = buildDeployments(troopSlots);
-    const defenses = buildDefensePlacements(defenseSlots);
-    setMeta(newMeta);
-    setResult(simulateAttack(deployments, defenses));
+    if (!placed.length || !totalTroops) return;
+    const { deployments, meta: m } = buildDeployments(troopSlots);
+    setMeta(m);
+    setResult(simulateAttack(deployments, buildDefensePlacements(placed)));
   }
 
   const survivors = result
@@ -223,318 +196,430 @@ export default function SimulatorPanel() {
     : 0;
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-12 space-y-8">
+    <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
 
-      {/* ── Header ── */}
+      {/* Header */}
       <header className="space-y-1">
         <h1 className="text-4xl font-bold tracking-tight text-amber-400">RaidSense</h1>
         <p className="text-sm text-slate-400">Simulateur d&apos;attaque Clash of Clans</p>
       </header>
 
-      {/* ── Troupes ── */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-4">
-        <h2 className="text-base font-semibold text-slate-100">Troupes</h2>
+      {/* Grid + sidebar */}
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
 
-        <div className="space-y-2">
-          {troopSlots.map((slot, idx) => (
-            <TroopSlotRow
-              key={slot.slotId}
-              slot={slot}
-              color={TROOP_COLORS[idx % TROOP_COLORS.length]}
-              canRemove={troopSlots.length > 1}
-              onUpdate={(p) => updateTroopSlot(slot.slotId, p)}
-              onRemove={() => removeTroopSlot(slot.slotId)}
-            />
-          ))}
-        </div>
-
-        <div className="flex items-center justify-between pt-1">
-          <button
-            onClick={addTroopSlot}
-            disabled={troopSlots.length >= MAX_TROOP_SLOTS}
-            className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            + Ajouter un type de troupe
-          </button>
-          <p className="text-xs text-slate-400">
-            <span className="font-semibold text-slate-200">{totalTroops}</span> troupe{totalTroops > 1 ? "s" : ""} au total
+        {/* Grid */}
+        <div className="flex-shrink-0 space-y-2">
+          <p className="text-xs text-slate-500">
+            Glisser une défense depuis le panneau → poser sur la grille &nbsp;·&nbsp; Cliquer sur une défense pour la supprimer
+          </p>
+          <BattleGrid placed={placed} onPlace={handlePlace} onRemove={handleRemove} />
+          <p className="text-xs text-slate-600">
+            Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp; cercle = zone de drop des troupes &nbsp;·&nbsp; {placed.length}/{MAX_DEFENSES} défenses
           </p>
         </div>
-      </section>
 
-      {/* ── Défenses ── */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-4">
-        <h2 className="text-base font-semibold text-slate-100">Défenses</h2>
+        {/* Sidebar */}
+        <div className="flex-1 space-y-4" style={{ minWidth: 300 }}>
 
-        <div className="flex flex-col gap-6 lg:flex-row">
-
-          {/* Defense list */}
-          <div className="flex-1 space-y-2">
-            {defenseSlots.map((slot) => (
-              <DefenseSlotRow
-                key={slot.slotId}
-                slot={slot}
-                canRemove={defenseSlots.length > 1}
-                onUpdate={(p) => updateDefenseSlot(slot.slotId, p)}
-                onRemove={() => removeDefenseSlot(slot.slotId)}
-              />
-            ))}
-
-            <div className="flex items-center justify-between pt-1">
-              <button
-                onClick={addDefenseSlot}
-                disabled={defenseSlots.length >= MAX_DEFENSE_SLOTS}
-                className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                + Ajouter une défense
-              </button>
-              <p className="text-xs text-slate-500">{defenseSlots.length} / {MAX_DEFENSE_SLOTS}</p>
+          {/* Defense palette */}
+          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-100">Défenses</h2>
+              <span className="text-xs text-slate-500">{placed.length}/{MAX_DEFENSES} sur la grille</span>
             </div>
-          </div>
+            <DefensePalette
+              palLevels={palLevels}
+              onLevelChange={(id, lv) => setPalLevels((p) => ({ ...p, [id]: lv }))}
+            />
+          </section>
 
-          {/* Mini-map */}
-          <div className="flex flex-col items-center gap-2">
-            <MiniMap defenseSlots={defenseSlots} />
-            <p className="text-xs text-slate-600">Grille {GRID_SIZE}×{GRID_SIZE} — point de drop (cercle)</p>
-          </div>
+          {/* Troop composer */}
+          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
+            <h2 className="text-base font-semibold text-slate-100">Troupes</h2>
+            <TroopComposer
+              slots={troopSlots}
+              totalCount={totalTroops}
+              onUpdate={updateTroopSlot}
+              onAdd={addTroopSlot}
+              onRemove={removeTroopSlot}
+            />
+          </section>
 
         </div>
-      </section>
+      </div>
 
-      {/* ── Simuler ── */}
+      {/* Simulate */}
       <button
         onClick={handleSimulate}
-        disabled={totalTroops === 0 || defenseSlots.length === 0}
+        disabled={!placed.length || !totalTroops}
         className="w-full rounded-xl bg-amber-500 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 active:bg-amber-600 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-slate-950"
       >
         Simuler l&apos;attaque
       </button>
 
-      {/* ── Résultats ── */}
+      {/* Results */}
       {result && (
-        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-6">
-          <h2 className="text-base font-semibold text-slate-100">Résultats</h2>
-
-          {/* Top summary */}
-          <div className="grid grid-cols-3 gap-3">
-            <StatCard label="Durée" value={`${result.durationSeconds} secondes`} />
-            <StatCard
-              label="Troupes survivantes"
-              value={`${survivors} / ${meta.length}`}
-            />
-            <StatCard
-              label="Défenses détruites"
-              value={`${defenseSlots.filter((s) => result.defenses[s.slotId]?.destroyedAt !== null).length} / ${defenseSlots.length}`}
-              accent
-            />
-          </div>
-
-          {/* Per-defense results */}
-          <div>
-            <p className="mb-3 text-xs text-slate-500">État des défenses</p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {defenseSlots.map((slot) => {
-                const dr      = result.defenses[slot.slotId];
-                const defData = DEFENSES.find((d) => d.id === slot.defenseId)!;
-                return (
-                  <DefenseResultCard
-                    key={slot.slotId}
-                    name={`${defData.name} Lv${slot.level}`}
-                    position={{ x: slot.x, y: slot.y }}
-                    destroyedAt={dr?.destroyedAt ?? null}
-                    damageDealt={dr?.totalDamageDealt ?? 0}
-                    color={DEFENSE_MAP_FILL[slot.defenseId] ?? "#ef4444"}
-                  />
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Eliminated troops */}
-          {meta.some((m) => result.troops[m.instanceId]?.destroyedAt !== null) && (
-            <div className="space-y-0.5 text-xs text-slate-400">
-              <p className="mb-1 text-slate-500">Troupes éliminées</p>
-              {meta
-                .filter((m) => result.troops[m.instanceId]?.destroyedAt !== null)
-                .map((m) => (
-                  <p key={m.instanceId}>
-                    <span className={`font-mono font-medium ${m.color}`}>{m.label}</span>
-                    {" "}— morte à t={result.troops[m.instanceId]!.destroyedAt!.toFixed(1)} sec
-                  </p>
-                ))}
-            </div>
-          )}
-
-          {/* HP table */}
-          <div>
-            <p className="mb-3 text-xs text-slate-500">HP des troupes par seconde</p>
-            <div className="overflow-x-auto">
-              <HpTable result={result} meta={meta} />
-            </div>
-          </div>
-        </section>
+        <ResultsSection
+          result={result}
+          meta={meta}
+          placed={placed}
+          totalTroops={totalTroops}
+          survivors={survivors}
+        />
       )}
+
     </div>
   );
 }
 
-// ── TroopSlotRow ───────────────────────────────────────────────────────────
+// ── BattleGrid ─────────────────────────────────────────────────────────────
+// CSS background-image pour les lignes de grille (0 div par cellule).
+// Défenses = divs absolus (max 8). SVG overlay = anneau + highlight.
+// Event delegation sur le container pour drag & click.
 
-function TroopSlotRow({
-  slot, color, canRemove, onUpdate, onRemove,
+const W = GRID_SIZE * CELL; // 616 px
+
+function BattleGrid({
+  placed,
+  onPlace,
+  onRemove,
 }: {
-  slot: TroopSlot;
-  color: string;
-  canRemove: boolean;
-  onUpdate: (p: Partial<Omit<TroopSlot, "slotId">>) => void;
-  onRemove: () => void;
+  placed: PlacedDefense[];
+  onPlace: (x: number, y: number, defenseId: string, level: number) => void;
+  onRemove: (instanceId: string) => void;
 }) {
-  const troop     = TROOPS.find((t) => t.id === slot.troopId)!;
-  const levelData = troop.levels.find((l) => l.level === slot.level)!;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dragCell, setDragCell] = useState<string | null>(null);
+
+  function cellAt(e: { clientX: number; clientY: number }) {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const x = Math.floor((e.clientX - rect.left) / CELL);
+    const y = Math.floor((e.clientY - rect.top)  / CELL);
+    return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE ? { x, y } : null;
+  }
+
+  function onDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    const c = cellAt(e);
+    if (c) setDragCell((p) => { const k = `${c.x},${c.y}`; return p === k ? p : k; });
+  }
+
+  function onDragLeave(e: React.DragEvent) {
+    if (!containerRef.current?.contains(e.relatedTarget as Node | null)) setDragCell(null);
+  }
+
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    const c = cellAt(e);
+    setDragCell(null);
+    if (!c) return;
+    try {
+      const { defenseId, level } = JSON.parse(e.dataTransfer.getData("text/plain"));
+      onPlace(c.x, c.y, defenseId, level);
+    } catch { /* bad payload */ }
+  }
+
+  function onClick(e: React.MouseEvent) {
+    const c = cellAt(e);
+    if (!c) return;
+    const d = placed.find((d) => d.x === c.x && d.y === c.y);
+    if (d) onRemove(d.instanceId);
+  }
+
+  const defenseSquares = useMemo(() =>
+    placed.map((d) => {
+      const name = DEFENSES.find((def) => def.id === d.defenseId)?.name ?? d.defenseId;
+      return (
+        <div
+          key={d.instanceId}
+          title={`${name} Lv${d.level} (${d.x}, ${d.y}) — cliquer pour supprimer`}
+          style={{
+            position:        "absolute",
+            left:            d.x * CELL + 1,
+            top:             d.y * CELL + 1,
+            width:           CELL - 2,
+            height:          CELL - 2,
+            backgroundColor: DEFENSE_FILL[d.defenseId] ?? "#ef4444",
+            borderRadius:    2,
+            cursor:          "pointer",
+            zIndex:          1,
+            pointerEvents:   "none", // clicks handled by container
+          }}
+        />
+      );
+    }), [placed]);
 
   return (
-    <div className="flex items-end gap-2">
-      <div className={`mb-2.5 h-2 w-2 flex-shrink-0 rounded-full bg-current ${color}`} />
-      <div className="grid flex-1 grid-cols-3 gap-2 sm:grid-cols-[2fr_1fr_1fr_auto]">
-        <Field label="Troupe">
-          <Select value={slot.troopId} onChange={(e) => onUpdate({ troopId: e.target.value })}>
-            {TROOPS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </Select>
-        </Field>
-        <Field label={`Niv. (max ${troop.levels.length})`}>
-          <Select value={slot.level} onChange={(e) => onUpdate({ level: Number(e.target.value) })}>
-            {troop.levels.map((l) => <option key={l.level} value={l.level}>Lv {l.level}</option>)}
-          </Select>
-        </Field>
-        <Field label="Qté">
-          <Select value={slot.count} onChange={(e) => onUpdate({ count: Number(e.target.value) })}>
-            {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </Select>
-        </Field>
-        <div className="hidden items-end pb-2.5 sm:flex">
-          <p className="text-xs leading-tight text-slate-500">{levelData.hp} HP<br />{levelData.dps} DPS</p>
-        </div>
-      </div>
-      <RemoveButton disabled={!canRemove} onClick={onRemove} />
-    </div>
-  );
-}
-
-// ── DefenseSlotRow ─────────────────────────────────────────────────────────
-
-function DefenseSlotRow({
-  slot, canRemove, onUpdate, onRemove,
-}: {
-  slot: DefenseSlot;
-  canRemove: boolean;
-  onUpdate: (p: Partial<Omit<DefenseSlot, "slotId">>) => void;
-  onRemove: () => void;
-}) {
-  const defense   = DEFENSES.find((d) => d.id === slot.defenseId)!;
-  const levelData = defense.levels.find((l) => l.level === slot.level)!;
-  const dotColor  = DEFENSE_MAP_FILL[slot.defenseId] ?? "#ef4444";
-
-  return (
-    <div className="flex items-end gap-2">
-      {/* Color dot matching mini-map */}
-      <div
-        className="mb-2.5 h-2 w-2 flex-shrink-0 rounded-sm"
-        style={{ backgroundColor: dotColor }}
-      />
-      <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-[2fr_1fr_48px_48px_auto]">
-        {/* Type */}
-        <Field label="Défense">
-          <Select value={slot.defenseId} onChange={(e) => onUpdate({ defenseId: e.target.value })}>
-            {DEFENSES.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </Select>
-        </Field>
-        {/* Level */}
-        <Field label={`Niv. (max ${defense.levels.length})`}>
-          <Select value={slot.level} onChange={(e) => onUpdate({ level: Number(e.target.value) })}>
-            {defense.levels.map((l) => <option key={l.level} value={l.level}>Lv {l.level}</option>)}
-          </Select>
-        </Field>
-        {/* X */}
-        <Field label="X">
-          <CoordInput value={slot.x} onChange={(v) => onUpdate({ x: v })} />
-        </Field>
-        {/* Y */}
-        <Field label="Y">
-          <CoordInput value={slot.y} onChange={(v) => onUpdate({ y: v })} />
-        </Field>
-        {/* HP hint */}
-        <div className="hidden items-end pb-2.5 sm:flex">
-          <p className="text-xs leading-tight text-slate-500">{levelData.hp} HP<br />{levelData.dps} DPS</p>
-        </div>
-      </div>
-      <RemoveButton disabled={!canRemove} onClick={onRemove} />
-    </div>
-  );
-}
-
-// ── MiniMap ────────────────────────────────────────────────────────────────
-
-const CELL = 6; // px per tile
-const MAP_PX = GRID_SIZE * CELL; // 264px
-
-function MiniMap({ defenseSlots }: { defenseSlots: DefenseSlot[] }) {
-  const gridLines = Array.from(
-    { length: Math.floor(GRID_SIZE / 5) + 1 },
-    (_, i) => i * 5
-  );
-
-  return (
-    <svg
-      width={MAP_PX}
-      height={MAP_PX}
-      viewBox={`0 0 ${MAP_PX} ${MAP_PX}`}
-      className="flex-shrink-0 rounded-xl border border-slate-700"
+    <div
+      ref={containerRef}
+      className="relative rounded-lg border border-slate-700 overflow-hidden"
+      style={{
+        width:           W,
+        height:          W,
+        backgroundImage: [
+          "linear-gradient(to right,  #1e293b 1px, transparent 1px)",
+          "linear-gradient(to bottom, #1e293b 1px, transparent 1px)",
+        ].join(","),
+        backgroundSize:  `${CELL}px ${CELL}px`,
+        backgroundColor: "#0f172a",
+        cursor:          "crosshair",
+      }}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onClick={onClick}
     >
-      <rect width={MAP_PX} height={MAP_PX} fill="#0f172a" />
+      {/* Defense markers */}
+      {defenseSquares}
 
-      {/* Grid lines every 5 tiles */}
-      {gridLines.map((t) => (
-        <g key={t}>
-          <line x1={0} y1={t * CELL} x2={MAP_PX} y2={t * CELL} stroke="#1e293b" strokeWidth={0.5} />
-          <line x1={t * CELL} y1={0} x2={t * CELL} y2={MAP_PX} stroke="#1e293b" strokeWidth={0.5} />
-        </g>
-      ))}
+      {/* SVG: drop ring + drag highlight */}
+      <svg className="absolute inset-0 pointer-events-none" width={W} height={W}>
+        {/* Drop ring */}
+        <circle
+          cx={(DROP_CENTER.x + 0.5) * CELL}
+          cy={(DROP_CENTER.y + 0.5) * CELL}
+          r={DROP_RADIUS * CELL}
+          fill="rgba(251,191,36,0.05)"
+          stroke="#f59e0b"
+          strokeWidth={1.5}
+          strokeDasharray="5 3"
+        />
+        <circle
+          cx={(DROP_CENTER.x + 0.5) * CELL}
+          cy={(DROP_CENTER.y + 0.5) * CELL}
+          r={2.5}
+          fill="#f59e0b"
+          opacity={0.5}
+        />
+        {/* Drag-over cell highlight */}
+        {dragCell && (
+          <rect
+            x={parseInt(dragCell.split(",")[0]) * CELL + 1}
+            y={parseInt(dragCell.split(",")[1]) * CELL + 1}
+            width={CELL - 2}
+            height={CELL - 2}
+            fill="rgba(251,191,36,0.2)"
+            stroke="#f59e0b"
+            strokeWidth={1.5}
+            rx={2}
+          />
+        )}
+      </svg>
+    </div>
+  );
+}
 
-      {/* Drop ring */}
-      <circle
-        cx={DROP_CENTER.x * CELL}
-        cy={DROP_CENTER.y * CELL}
-        r={DROP_RADIUS * CELL}
-        fill="rgba(251,191,36,0.04)"
-        stroke="#f59e0b"
-        strokeWidth={1}
-        strokeDasharray="4 3"
-      />
-      {/* Drop centre dot */}
-      <circle cx={DROP_CENTER.x * CELL} cy={DROP_CENTER.y * CELL} r={2.5} fill="#f59e0b" opacity={0.5} />
+// ── DefensePalette ─────────────────────────────────────────────────────────
 
-      {/* Defenses */}
-      {defenseSlots.map((slot) => {
-        const fill  = DEFENSE_MAP_FILL[slot.defenseId] ?? "#ef4444";
-        const label = DEFENSES.find((d) => d.id === slot.defenseId)?.name.slice(0, 4) ?? "?";
-        const cx    = slot.x * CELL;
-        const cy    = slot.y * CELL;
+function DefensePalette({
+  palLevels,
+  onLevelChange,
+}: {
+  palLevels: Record<string, number>;
+  onLevelChange: (id: string, level: number) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      {DEFENSES.map((def) => {
+        const level = palLevels[def.id] ?? 1;
+        const fill  = DEFENSE_FILL[def.id] ?? "#ef4444";
+
         return (
-          <g key={slot.slotId}>
-            <rect x={cx - 4} y={cy - 4} width={8} height={8} rx={1} fill={fill} opacity={0.9}>
-              <title>{`${label} Lv${slot.level} (${slot.x}, ${slot.y})`}</title>
-            </rect>
-          </g>
+          <div
+            key={def.id}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(
+                "text/plain",
+                JSON.stringify({ defenseId: def.id, level })
+              );
+              e.dataTransfer.effectAllowed = "copy";
+            }}
+            className="flex items-center gap-2.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none"
+          >
+            {/* Color swatch */}
+            <div className="flex-shrink-0 rounded-sm" style={{ width: 10, height: 10, backgroundColor: fill }} />
+
+            {/* Name */}
+            <span className="flex-1 text-xs font-medium text-slate-200 truncate">
+              {def.name}
+            </span>
+
+            {/* Level selector — stops propagation to prevent interfering with drag */}
+            <div
+              draggable={false}
+              onDragStart={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <select
+                value={level}
+                onChange={(e) => onLevelChange(def.id, Number(e.target.value))}
+                className="rounded border border-slate-600 bg-slate-900 text-xs text-slate-200 px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500"
+              >
+                {def.levels.map((l) => (
+                  <option key={l.level} value={l.level}>Lv {l.level}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Drag hint */}
+            <span className="text-slate-600 text-xs" aria-hidden>⠿</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── TroopComposer ──────────────────────────────────────────────────────────
+
+function TroopComposer({
+  slots,
+  totalCount,
+  onUpdate,
+  onAdd,
+  onRemove,
+}: {
+  slots: TroopSlot[];
+  totalCount: number;
+  onUpdate: (slotId: string, patch: Partial<Omit<TroopSlot, "slotId">>) => void;
+  onAdd: () => void;
+  onRemove: (slotId: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      {slots.map((slot, idx) => {
+        const troop = TROOPS.find((t) => t.id === slot.troopId)!;
+        const lData = troop.levels.find((l) => l.level === slot.level)!;
+        const color = TROOP_COLORS[idx % TROOP_COLORS.length];
+
+        return (
+          <div key={slot.slotId} className="flex items-end gap-2">
+            <div className={`mb-2.5 h-2 w-2 flex-shrink-0 rounded-full bg-current ${color}`} />
+
+            <div className="grid flex-1 grid-cols-3 gap-2 sm:grid-cols-[2fr_1fr_1fr_auto]">
+              <Field label="Troupe">
+                <Select value={slot.troopId} onChange={(e) => onUpdate(slot.slotId, { troopId: e.target.value })}>
+                  {TROOPS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </Select>
+              </Field>
+              <Field label={`Niv. (max ${troop.levels.length})`}>
+                <Select value={slot.level} onChange={(e) => onUpdate(slot.slotId, { level: Number(e.target.value) })}>
+                  {troop.levels.map((l) => <option key={l.level} value={l.level}>Lv {l.level}</option>)}
+                </Select>
+              </Field>
+              <Field label="Qté">
+                <Select value={slot.count} onChange={(e) => onUpdate(slot.slotId, { count: Number(e.target.value) })}>
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </Select>
+              </Field>
+              <div className="hidden sm:flex items-end pb-2.5">
+                <p className="text-xs leading-tight text-slate-500">
+                  {lData.hp} HP<br />{lData.dps} DPS
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => onRemove(slot.slotId)}
+              disabled={slots.length <= 1}
+              className="mb-1 rounded-lg p-1.5 text-lg leading-none text-slate-600 hover:bg-slate-800 hover:text-rose-400 disabled:pointer-events-none disabled:opacity-0 transition-colors"
+            >×</button>
+          </div>
         );
       })}
 
-      {/* Corner label */}
-      <text x={3} y={MAP_PX - 3} fill="#334155" fontSize={7} fontFamily="monospace">
-        {GRID_SIZE}×{GRID_SIZE}
-      </text>
-    </svg>
+      <div className="flex items-center justify-between pt-1">
+        <button
+          onClick={onAdd}
+          disabled={slots.length >= MAX_TROOP_SLOTS}
+          className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
+        >
+          + Ajouter un type
+        </button>
+        <p className="text-xs text-slate-400">
+          <span className="font-semibold text-slate-200">{totalCount}</span>{" "}
+          troupe{totalCount > 1 ? "s" : ""}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── ResultsSection ─────────────────────────────────────────────────────────
+
+function ResultsSection({
+  result, meta, placed, totalTroops, survivors,
+}: {
+  result: SimulationResult;
+  meta: TroopMeta[];
+  placed: PlacedDefense[];
+  totalTroops: number;
+  survivors: number;
+}) {
+  const destroyedCount = placed.filter(
+    (d) => result.defenses[d.instanceId]?.destroyedAt !== null
+  ).length;
+
+  return (
+    <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-6">
+      <h2 className="text-base font-semibold text-slate-100">Résultats</h2>
+
+      {/* Summary */}
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard label="Durée" value={`${result.durationSeconds} secondes`} />
+        <StatCard label="Troupes survivantes" value={`${survivors} / ${totalTroops}`} />
+        <StatCard label="Défenses détruites" value={`${destroyedCount} / ${placed.length}`} accent />
+      </div>
+
+      {/* Per-defense cards */}
+      <div>
+        <p className="mb-3 text-xs text-slate-500">État des défenses</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {placed.map((d) => {
+            const dr  = result.defenses[d.instanceId];
+            const def = DEFENSES.find((def) => def.id === d.defenseId)!;
+            return (
+              <DefenseResultCard
+                key={d.instanceId}
+                name={`${def.name} Lv${d.level}`}
+                position={{ x: d.x, y: d.y }}
+                destroyedAt={dr?.destroyedAt ?? null}
+                damageDealt={dr?.totalDamageDealt ?? 0}
+                color={DEFENSE_FILL[d.defenseId] ?? "#ef4444"}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Eliminated troops */}
+      {meta.some((m) => result.troops[m.instanceId]?.destroyedAt !== null) && (
+        <div className="space-y-0.5 text-xs text-slate-400">
+          <p className="mb-1 text-slate-500">Troupes éliminées</p>
+          {meta
+            .filter((m) => result.troops[m.instanceId]?.destroyedAt !== null)
+            .map((m) => (
+              <p key={m.instanceId}>
+                <span className={`font-mono font-medium ${m.color}`}>{m.label}</span>
+                {" "}— morte à t={result.troops[m.instanceId]!.destroyedAt!.toFixed(1)} sec
+              </p>
+            ))}
+        </div>
+      )}
+
+      {/* HP table */}
+      <div>
+        <p className="mb-3 text-xs text-slate-500">HP des troupes par seconde</p>
+        <div className="overflow-x-auto">
+          <HpTable result={result} meta={meta} />
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -543,13 +628,10 @@ function MiniMap({ defenseSlots }: { defenseSlots: DefenseSlot[] }) {
 function DefenseResultCard({
   name, position, destroyedAt, damageDealt, color,
 }: {
-  name: string;
-  position: Vec2;
-  destroyedAt: number | null;
-  damageDealt: number;
-  color: string;
+  name: string; position: Vec2;
+  destroyedAt: number | null; damageDealt: number; color: string;
 }) {
-  const destroyed = destroyedAt !== null;
+  const done = destroyedAt !== null;
   return (
     <div className="rounded-xl bg-slate-800 px-4 py-3">
       <div className="flex items-start justify-between gap-2">
@@ -560,12 +642,12 @@ function DefenseResultCard({
             <p className="text-xs text-slate-500">({position.x}, {position.y})</p>
           </div>
         </div>
-        <span className={`flex-shrink-0 text-xs font-semibold ${destroyed ? "text-amber-400" : "text-slate-500"}`}>
-          {destroyed ? "Détruit" : "Survit"}
+        <span className={`flex-shrink-0 text-xs font-semibold ${done ? "text-amber-400" : "text-slate-500"}`}>
+          {done ? "Détruit" : "Survit"}
         </span>
       </div>
       <p className="mt-1.5 text-xs text-slate-500">
-        {destroyed ? `t=${destroyedAt!.toFixed(1)} sec · ` : ""}
+        {done ? `t=${destroyedAt!.toFixed(1)} sec · ` : ""}
         {damageDealt.toLocaleString()} HP infligés
       </p>
     </div>
@@ -576,12 +658,11 @@ function DefenseResultCard({
 
 function HpTable({ result, meta }: { result: SimulationResult; meta: TroopMeta[] }) {
   const maxT = Math.floor(result.durationSeconds);
-
-  const slotGroups: { slotId: string; troopName: string; color: string; members: TroopMeta[] }[] = [];
+  const groups: { slotId: string; troopName: string; color: string; members: TroopMeta[] }[] = [];
   for (const m of meta) {
-    const g = slotGroups.find((g) => g.slotId === m.slotId);
+    const g = groups.find((g) => g.slotId === m.slotId);
     if (g) g.members.push(m);
-    else slotGroups.push({ slotId: m.slotId, troopName: m.troopName, color: m.color, members: [m] });
+    else groups.push({ slotId: m.slotId, troopName: m.troopName, color: m.color, members: [m] });
   }
 
   return (
@@ -589,7 +670,7 @@ function HpTable({ result, meta }: { result: SimulationResult; meta: TroopMeta[]
       <thead>
         <tr className="border-b border-slate-700">
           <th className="pb-1 pr-4 text-left" />
-          {slotGroups.map((g) => (
+          {groups.map((g) => (
             <th key={g.slotId} colSpan={g.members.length} className={`pb-1 px-2 text-center font-semibold ${g.color}`}>
               {g.troopName}
             </th>
@@ -597,9 +678,7 @@ function HpTable({ result, meta }: { result: SimulationResult; meta: TroopMeta[]
         </tr>
         <tr className="border-b border-slate-800 text-slate-500">
           <th className="pb-2 pr-4 text-left">t</th>
-          {meta.map((m) => (
-            <th key={m.instanceId} className={`px-2 pb-2 ${m.color}`}>{m.label}</th>
-          ))}
+          {meta.map((m) => <th key={m.instanceId} className={`px-2 pb-2 ${m.color}`}>{m.label}</th>)}
         </tr>
       </thead>
       <tbody>
@@ -611,12 +690,8 @@ function HpTable({ result, meta }: { result: SimulationResult; meta: TroopMeta[]
               const hp   = tr?.hpPerSecond[t] ?? 0;
               const dead = hp === 0 && tr?.destroyedAt !== null;
               const pct  = hp / m.maxHp;
-              const color = dead ? "text-slate-600" : pct > 0.6 ? "text-slate-200" : pct > 0.3 ? "text-amber-400" : "text-red-400";
-              return (
-                <td key={m.instanceId} className={`px-2 py-1 ${color}`}>
-                  {dead ? "—" : hp}
-                </td>
-              );
+              const c    = dead ? "text-slate-600" : pct > 0.6 ? "text-slate-200" : pct > 0.3 ? "text-amber-400" : "text-red-400";
+              return <td key={m.instanceId} className={`px-2 py-1 ${c}`}>{dead ? "—" : hp}</td>;
             })}
           </tr>
         ))}
@@ -636,9 +711,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Select({
-  value, onChange, children,
-}: {
+function Select({ value, onChange, children }: {
   value: string | number;
   onChange: React.ChangeEventHandler<HTMLSelectElement>;
   children: React.ReactNode;
@@ -654,37 +727,11 @@ function Select({
   );
 }
 
-function CoordInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  return (
-    <input
-      type="number"
-      min={0}
-      max={GRID_SIZE - 1}
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-2 py-2 text-center text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
-    />
-  );
-}
-
 function StatCard({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className="rounded-xl bg-slate-800 px-4 py-3">
       <p className="text-xs text-slate-500">{label}</p>
       <p className={`mt-0.5 text-sm font-semibold ${accent ? "text-amber-400" : "text-slate-200"}`}>{value}</p>
     </div>
-  );
-}
-
-function RemoveButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title="Supprimer"
-      className="mb-1 rounded-lg p-1.5 text-lg leading-none text-slate-600 transition-colors hover:bg-slate-800 hover:text-rose-400 disabled:pointer-events-none disabled:opacity-0"
-    >
-      ×
-    </button>
   );
 }
