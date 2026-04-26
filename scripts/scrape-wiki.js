@@ -3,9 +3,12 @@
 /**
  * scripts/scrape-wiki.js
  *
- * Scrape https://clashofclans.fandom.com/wiki/<Troop> directement.
- * Cherche les tables avec class="wikitable" (pas l'API JSON).
- * Aucune dépendance externe — uniquement https built-in de Node.js.
+ * Récupère les stats de troupes CoC via l'API MediaWiki (wikitext brut).
+ * Le wikitext contient les tableaux avant tout rendu JavaScript.
+ *
+ * API utilisée :
+ *   https://clashofclans.fandom.com/api.php
+ *     ?action=parse&prop=wikitext&format=json&page=<Troupe>
  *
  * Usage :
  *   node scripts/scrape-wiki.js
@@ -18,27 +21,26 @@ const http  = require('http');
 
 const TROOPS_TO_SCRAPE = ['Barbarian', 'Giant'];
 
-const WIKI_BASE = 'https://clashofclans.fandom.com/wiki/';
+const API = 'https://clashofclans.fandom.com/api.php';
 
 const REQ_HEADERS = {
   'User-Agent': 'RaidSense-Scraper/1.0 (https://github.com/RaidSense/raidsense)',
-  'Accept':     'text/html,application/xhtml+xml',
+  'Accept':     'application/json',
 };
 
-// ── HTTP (avec suivi de redirections) ─────────────────────────────────────
+// ── HTTP ───────────────────────────────────────────────────────────────────
 
-function get(url, redirects = 5) {
+function get(url, hops = 5) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https') ? https : http;
     lib.get(url, { headers: REQ_HEADERS }, (res) => {
-      // Suivi de redirections 3xx
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
-        if (redirects === 0) { reject(new Error('Trop de redirections')); return; }
+        if (!hops) { reject(new Error('Trop de redirections')); return; }
         const next = res.headers.location.startsWith('http')
           ? res.headers.location
           : new URL(res.headers.location, url).href;
-        get(next, redirects - 1).then(resolve).catch(reject);
+        get(next, hops - 1).then(resolve).catch(reject);
         return;
       }
       if (res.statusCode !== 200) {
@@ -52,93 +54,147 @@ function get(url, redirects = 5) {
   });
 }
 
-// ── HTML utilities ─────────────────────────────────────────────────────────
+// ── Nettoyage du wikitext ──────────────────────────────────────────────────
 
-const HTML_ENTITIES = {
-  '&amp;':   '&',  '&lt;':    '<',  '&gt;':   '>',
-  '&nbsp;':  ' ',  '&#160;':  ' ',  '&quot;': '"',
-  '&ndash;': '–',  '&mdash;': '—',
-};
+/**
+ * Nettoie le contenu d'une cellule wikitext :
+ *   {{Formatnum:1234}} → "1234"
+ *   [[link|texte]]     → "texte"
+ *   '''gras'''         → "gras"
+ *   <br />, <ref>…    → supprimés
+ */
+function cleanCell(raw) {
+  let s = raw.trim();
 
-function stripTags(html) {
-  return html
-    .replace(/<[^>]*>/g, ' ')             // remplace les balises par un espace
-    .replace(/&[a-z#0-9]+;/gi, (e) => HTML_ENTITIES[e] ?? '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // {{Formatnum:N}} → N (avant de supprimer les autres templates)
+  s = s.replace(/\{\{formatnum:([^|}]*)\}\}/gi, '$1');
+
+  // Templates imbriqués : plusieurs passes jusqu'à stabilisation
+  for (let pass = 0; pass < 3; pass++) {
+    s = s.replace(/\{\{[^{}]*\}\}/g, '');
+  }
+
+  // [[File:…]] / [[Image:…]]
+  s = s.replace(/\[\[(?:File|Image):[^\]]*\]\]/gi, '');
+
+  // [[lien|texte]] → texte  /  [[lien]] → lien
+  s = s.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, '$1');
+
+  // Balises HTML
+  s = s.replace(/<[^>]*>/g, '');
+
+  // Markup gras / italique
+  s = s.replace(/'{2,5}/g, '');
+
+  return s.replace(/\s+/g, ' ').trim();
 }
 
 /**
- * Extrait tous les blocs <table class="...wikitable...">…</table>
- * avec suivi de profondeur pour gérer l'imbrication correctement.
+ * Extrait le contenu d'une cellule qui peut commencer par des attributs :
+ *   "style=... | contenu"  →  "contenu"
+ *   "45"                   →  "45"
  */
-function extractWikiTables(html) {
+function cellContent(raw) {
+  const s = raw.trim();
+  // Si la partie avant un éventuel | contient un =, ce sont des attributs
+  const pipe = s.indexOf('|');
+  if (pipe > 0 && s.slice(0, pipe).includes('=')) {
+    return cleanCell(s.slice(pipe + 1));
+  }
+  return cleanCell(s);
+}
+
+// ── Parser de tables wikitext ──────────────────────────────────────────────
+
+/**
+ * Extrait tous les blocs {| … |} du wikitext, en suivant la profondeur
+ * pour gérer les tables imbriquées correctement.
+ */
+function extractWikitextTables(wikitext) {
   const tables = [];
-  const lower  = html.toLowerCase();
-  let i = 0;
+  const lines  = wikitext.split('\n');
+  let depth    = 0;
+  let buf      = [];
 
-  while (i < lower.length) {
-    // Trouver le prochain <table
-    const s = lower.indexOf('<table', i);
-    if (s === -1) break;
+  for (const line of lines) {
+    const t = line.trimStart();
 
-    // Lire jusqu'à la fermeture du tag ouvrant pour inspecter les attributs
-    const tagClose = lower.indexOf('>', s);
-    if (tagClose === -1) { i = s + 1; continue; }
-    const openTag  = lower.slice(s, tagClose + 1);
-
-    // Extraire le bloc complet avec suivi de profondeur
-    let depth = 1;
-    let j     = tagClose + 1;
-    while (j < lower.length && depth > 0) {
-      if (lower.startsWith('<table', j))        { depth++; j += 6; }
-      else if (lower.startsWith('</table>', j)) { depth--; j += 8; }
-      else                                       { j++;             }
+    if (t.startsWith('{|')) {
+      depth++;
+      buf.push(line);
+    } else if (t.startsWith('|}')) {
+      if (depth > 0) {
+        buf.push(line);
+        depth--;
+        if (depth === 0) {
+          tables.push(buf.join('\n'));
+          buf = [];
+        }
+      }
+    } else if (depth > 0) {
+      buf.push(line);
     }
-
-    // Ne garder que les tables avec la classe wikitable
-    if (/class="[^"]*wikitable/.test(openTag)) {
-      tables.push(html.slice(s, j));
-    }
-
-    i = s + 1;
   }
 
   return tables;
 }
 
 /**
- * Parse une table HTML en tableau de lignes × colonnes (chaînes brutes).
- * Supprime les tables imbriquées avant de chercher les <tr>.
- * Gère colspan.
+ * Parse un bloc de table wikitext en tableau de lignes × colonnes.
+ *
+ * Formats gérés :
+ *   ! En-tête 1 !! En-tête 2 !! …   (headers sur une ligne)
+ *   | cellule 1 || cellule 2 || …   (données sur une ligne)
+ *   |                                (cellule isolée)
+ *   |-                               (séparateur de ligne)
  */
-function parseRows(tableHtml) {
-  // Supprimer les éventuelles tables imbriquées (en plusieurs passes)
-  let flat = tableHtml;
-  let prev;
-  do {
-    prev = flat;
-    flat = flat.replace(/<table[^>]*>[\s\S]*?<\/table>/gi, '');
-  } while (flat !== prev);
+function parseWikitextTable(tableText) {
+  const rows    = [];
+  let curRow    = null;
+  // Ignorer la première ligne ({| class=…) et la dernière (|})
+  const lines   = tableText.split('\n').slice(1, -1);
 
-  const rows  = [];
-  const trRe  = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
-  let trM;
+  for (const line of lines) {
+    const t = line.trimStart();
 
-  while ((trM = trRe.exec(flat)) !== null) {
-    const cells = [];
-    const tdRe  = /<(td|th)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
-    let tdM;
-
-    while ((tdM = tdRe.exec(trM[1])) !== null) {
-      const attrs   = tdM[2];
-      const text    = stripTags(tdM[3]);
-      const colspan = parseInt((attrs.match(/colspan=["']?(\d+)/i) ?? [])[1] ?? '1');
-      for (let c = 0; c < colspan; c++) cells.push(text);
+    if (t.startsWith('|-')) {
+      // Séparateur : sauvegarder la ligne courante et en commencer une nouvelle
+      if (curRow !== null && curRow.length > 0) rows.push(curRow);
+      curRow = [];
+      continue;
     }
 
-    if (cells.length) rows.push(cells);
+    if (t.startsWith('|+')) continue; // Légende de table
+
+    if (t.startsWith('!')) {
+      // Ligne d'en-têtes : peut contenir plusieurs cellules séparées par !!
+      if (curRow === null) curRow = [];
+      const parts = t.slice(1).split('!!');
+      curRow.push(...parts.map(cellContent));
+      continue;
+    }
+
+    if (t.startsWith('||')) {
+      // Continuation de cellules sur la même ligne (rare mais possible)
+      if (curRow === null) curRow = [];
+      const parts = t.slice(2).split('||');
+      curRow.push(...parts.map(cellContent));
+      continue;
+    }
+
+    if (t.startsWith('|')) {
+      // Ligne de données : une ou plusieurs cellules séparées par ||
+      if (curRow === null) curRow = [];
+      const parts = t.slice(1).split('||');
+      curRow.push(...parts.map(cellContent));
+      continue;
+    }
+
+    // Ligne de continuation d'une cellule multi-ligne (ignorée ici)
   }
+
+  // Ne pas oublier la dernière ligne
+  if (curRow !== null && curRow.length > 0) rows.push(curRow);
 
   return rows;
 }
@@ -146,27 +202,32 @@ function parseRows(tableHtml) {
 // ── Scraper ────────────────────────────────────────────────────────────────
 
 async function scrapeTroop(pageName) {
-  const url  = WIKI_BASE + encodeURIComponent(pageName);
-  const html = await get(url);
+  const url = `${API}?action=parse&page=${encodeURIComponent(pageName)}&prop=wikitext&format=json`;
+  const raw  = await get(url);
+  const json = JSON.parse(raw);
 
-  const tables = extractWikiTables(html);
-  if (!tables.length) throw new Error(`Aucune wikitable trouvée sur la page "${pageName}"`);
+  if (json.error) throw new Error(`API error: ${json.error.info}`);
 
-  // Trouver la table de stats : chercher celle dont les en-têtes
-  // contiennent à la fois "Level"/"Niv", "Hitpoints" et "Damage".
-  let statTable = null;
+  const wikitext = json?.parse?.wikitext?.['*'] ?? '';
+  if (!wikitext) throw new Error(`Wikitext vide pour "${pageName}"`);
+
+  // Extraire toutes les tables du wikitext
+  const tables = extractWikitextTables(wikitext);
+  if (!tables.length) throw new Error(`Aucune table wikitext trouvée pour "${pageName}"`);
+
+  // Trouver la table de stats (Level + Hitpoints + Damage dans les en-têtes)
   let headers   = [];
+  let statTable = null;
 
   for (const tbl of tables) {
-    const rows = parseRows(tbl);
+    const rows = parseWikitextTable(tbl);
 
-    // La première ligne (ou les deux premières) peut être la ligne d'en-têtes
-    for (const row of rows.slice(0, 3)) {
+    for (const row of rows.slice(0, 4)) {
       const hasLevel  = row.some((c) => /\blevel\b/i.test(c));
       const hasHp     = row.some((c) => /hitpoints|hit\s*point/i.test(c));
       const hasDamage = row.some((c) => /damage/i.test(c));
 
-      if (hasLevel && hasHp && hasDamage) {
+      if (hasLevel && (hasHp || hasDamage)) {
         statTable = tbl;
         headers   = row;
         break;
@@ -176,24 +237,25 @@ async function scrapeTroop(pageName) {
   }
 
   if (!statTable) {
-    // Debug : lister les tables trouvées
+    // Aide au diagnostic : afficher les premières lignes de chaque table
     const preview = tables.map((t, i) => {
-      const r = parseRows(t);
-      return `  Table ${i + 1} : ${(r[0] ?? []).slice(0, 5).join(' | ')}`;
+      const rows = parseWikitextTable(t);
+      const head = (rows[0] ?? []).slice(0, 6).join(' | ');
+      return `  [${i + 1}] ${head || '(vide)'}`;
     }).join('\n');
     throw new Error(
-      `Aucune table de stats (Level + Hitpoints + Damage) trouvée pour "${pageName}".\n` +
-      `Tables wikitable disponibles :\n${preview}`
+      `Aucune table de stats trouvée pour "${pageName}".\n` +
+      `Tables disponibles :\n${preview}`
     );
   }
 
-  // Lignes de données : la première cellule est un nombre (= numéro de niveau)
-  const allRows = parseRows(statTable);
+  // Lignes de données = première cellule est un entier (numéro de niveau)
+  const allRows = parseWikitextTable(statTable);
   const data    = allRows.filter((r) => /^\d+$/.test((r[0] ?? '').trim()));
 
-  if (!data.length) throw new Error(`Aucune ligne de données trouvée pour "${pageName}"`);
+  if (!data.length) throw new Error(`Aucune ligne de données pour "${pageName}"`);
 
-  // Associer les colonnes par nom
+  // Mapper les colonnes par regex
   function col(pattern) {
     return headers.findIndex((h) => pattern.test(h));
   }
@@ -205,14 +267,18 @@ async function scrapeTroop(pageName) {
   const iSpd   = col(/movement speed/i);
   const iTh    = col(/town\s*hall/i);
 
-  const levels = data.map((r) => ({
-    level: parseInt(r[iLevel]                 ?? '0'),
-    hp:    iHp  >= 0 ? parseInt((r[iHp]  ?? '').replace(/[^0-9]/g, '') || '0') : null,
-    dps:   iDps >= 0 ? parseInt((r[iDps] ?? '').replace(/[^0-9]/g, '') || '0') : null,
-    dpa:   iDpa >= 0 ? parseInt((r[iDpa] ?? '').replace(/[^0-9]/g, '') || '0') : null,
-    speed: iSpd >= 0 ? (r[iSpd] ?? null) : null,
-    th:    iTh  >= 0 ? parseInt((r[iTh]  ?? '').replace(/[^0-9]/g, '') || '0') : null,
-  })).filter((l) => l.level > 0);
+  const num = (s) => parseInt((s ?? '').replace(/[^0-9]/g, '') || '0');
+
+  const levels = data
+    .map((r) => ({
+      level: num(r[iLevel]),
+      hp:    iHp  >= 0 ? num(r[iHp])  : null,
+      dps:   iDps >= 0 ? num(r[iDps]) : null,
+      dpa:   iDpa >= 0 ? num(r[iDpa]) : null,
+      speed: iSpd >= 0 ? (r[iSpd] ?? null) : null,
+      th:    iTh  >= 0 ? num(r[iTh])  : null,
+    }))
+    .filter((l) => l.level > 0);
 
   return { name: pageName, headers, levels };
 }
@@ -224,29 +290,25 @@ function display(result) {
   console.log(`\n${SEP}`);
   console.log(`  ${result.name.toUpperCase()}  (${result.levels.length} niveaux)`);
   console.log(SEP);
-  console.log(`  En-têtes : ${result.headers.join(' | ')}\n`);
+  console.log(`  En-têtes :\n  ${result.headers.join(' | ')}\n`);
 
-  const W = { niv: 3, hp: 7, dps: 5, dpa: 6, spd: 7, th: 6 };
-  const h = [
-    'Niv'.padStart(W.niv),
-    'HP'.padStart(W.hp),
-    'DPS'.padStart(W.dps),
-    'DPA'.padStart(W.dpa),
-    'Vitesse'.padStart(W.spd),
-    'TH min'.padStart(W.th),
+  const cols = [
+    { label: 'Niv',     w: 3,  get: (l) => l.level },
+    { label: 'HP',      w: 7,  get: (l) => l.hp    },
+    { label: 'DPS',     w: 5,  get: (l) => l.dps   },
+    { label: 'DPA',     w: 6,  get: (l) => l.dpa   },
+    { label: 'Vitesse', w: 7,  get: (l) => l.speed },
+    { label: 'TH min',  w: 6,  get: (l) => l.th    },
   ];
-  console.log('  ' + h.join('  '));
-  console.log('  ' + h.map((c) => '─'.repeat(c.length)).join('  '));
+
+  console.log('  ' + cols.map((c) => c.label.padStart(c.w)).join('  '));
+  console.log('  ' + cols.map((c) => '─'.repeat(c.w)).join('  '));
 
   for (const l of result.levels) {
-    const row = [
-      String(l.level).padStart(W.niv),
-      (l.hp    != null ? String(l.hp)    : '—').padStart(W.hp),
-      (l.dps   != null ? String(l.dps)   : '—').padStart(W.dps),
-      (l.dpa   != null ? String(l.dpa)   : '—').padStart(W.dpa),
-      (l.speed != null ? l.speed          : '—').padStart(W.spd),
-      (l.th    != null ? String(l.th)     : '—').padStart(W.th),
-    ];
+    const row = cols.map((c) => {
+      const v = c.get(l);
+      return (v != null ? String(v) : '—').padStart(c.w);
+    });
     console.log('  ' + row.join('  '));
   }
 }
@@ -254,8 +316,8 @@ function display(result) {
 // ── Main ───────────────────────────────────────────────────────────────────
 
 (async () => {
-  console.log('RaidSense Wiki Scraper');
-  console.log(`URL  : ${WIKI_BASE}<Troupe>`);
+  console.log('RaidSense Wiki Scraper  (wikitext mode)');
+  console.log(`API  : ${API}`);
   console.log(`Test : ${TROOPS_TO_SCRAPE.join(', ')}\n`);
 
   for (const name of TROOPS_TO_SCRAPE) {
