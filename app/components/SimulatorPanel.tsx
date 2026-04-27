@@ -325,6 +325,7 @@ export default function SimulatorPanel() {
             <DefensePalette
               palLevels={palLevels}
               onLevelChange={(id, lv) => setPalLevels((p) => ({ ...p, [id]: lv }))}
+              cellSize={cellSize}
             />
           </section>
 
@@ -708,9 +709,11 @@ function ReplayControls({
 function DefensePalette({
   palLevels,
   onLevelChange,
+  cellSize,
 }: {
   palLevels: Record<string, number>;
   onLevelChange: (id: string, level: number) => void;
+  cellSize: number;
 }) {
   return (
     <div className="space-y-1.5">
@@ -728,6 +731,26 @@ function DefensePalette({
                 JSON.stringify({ defenseId: def.id, level })
               );
               e.dataTransfer.effectAllowed = "copy";
+
+              // Image de drag : carré coloré à la vraie taille du bâtiment
+              const tilePx = Math.round(cellSize * (def.size ?? 1));
+              const ghost  = document.createElement("div");
+              ghost.style.cssText = [
+                `width:${tilePx}px`,
+                `height:${tilePx}px`,
+                `background:${fill}`,
+                "border-radius:4px",
+                "opacity:0.85",
+                `box-shadow:0 2px 10px rgba(0,0,0,0.5)`,
+                "position:fixed",
+                `top:-${tilePx * 2}px`,  // hors écran
+                "left:0",
+                "pointer-events:none",
+              ].join(";");
+              document.body.appendChild(ghost);
+              e.dataTransfer.setDragImage(ghost, tilePx / 2, tilePx / 2);
+              // Le navigateur prend un snapshot synchrone ; on peut retirer
+              setTimeout(() => document.body.removeChild(ghost), 0);
             }}
             className="flex items-center gap-2.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none"
           >
