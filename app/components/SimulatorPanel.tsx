@@ -416,7 +416,8 @@ function BattleGrid({
   replayDestroyedIds?: Set<string>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dragCell, setDragCell] = useState<string | null>(null);
+  const [dragCell,          setDragCell]          = useState<string | null>(null);
+  const [hoveredDefenseId,  setHoveredDefenseId]  = useState<string | null>(null);
 
   function cellAt(e: { clientX: number; clientY: number }) {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -424,6 +425,19 @@ function BattleGrid({
     const x = Math.floor((e.clientX - rect.left) / CELL);
     const y = Math.floor((e.clientY - rect.top)  / CELL);
     return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE ? { x, y } : null;
+  }
+
+  function defenseAt(tileX: number, tileY: number) {
+    return placed.find((d) => {
+      const size = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
+      return tileX >= d.x && tileX < d.x + size && tileY >= d.y && tileY < d.y + size;
+    });
+  }
+
+  function onMouseMove(e: React.MouseEvent) {
+    const c = cellAt(e);
+    const id = c ? (defenseAt(c.x, c.y)?.instanceId ?? null) : null;
+    setHoveredDefenseId((prev) => (prev === id ? prev : id));
   }
 
   function onDragOver(e: React.DragEvent) {
@@ -451,13 +465,16 @@ function BattleGrid({
   function onClick(e: React.MouseEvent) {
     const c = cellAt(e);
     if (!c) return;
-    const d = placed.find((d) => d.x === c.x && d.y === c.y);
-    if (d) onRemove(d.instanceId);
+    const d = defenseAt(c.x, c.y);
+    if (d) { setHoveredDefenseId(null); onRemove(d.instanceId); }
   }
 
   const defenseSquares = placed.map((d) => {
-    const name      = DEFENSES.find((def) => def.id === d.defenseId)?.name ?? d.defenseId;
+    const defData   = DEFENSES.find((def) => def.id === d.defenseId);
+    const name      = defData?.name ?? d.defenseId;
+    const size      = defData?.size ?? 1;
     const destroyed = replayDestroyedIds?.has(d.instanceId) ?? false;
+    const hovered   = hoveredDefenseId === d.instanceId;
     return (
       <div
         key={d.instanceId}
@@ -466,15 +483,17 @@ function BattleGrid({
           position:        "absolute",
           left:            d.x * CELL + 1,
           top:             d.y * CELL + 1,
-          width:           CELL - 2,
-          height:          CELL - 2,
+          width:           size * CELL - 2,
+          height:          size * CELL - 2,
           backgroundColor: DEFENSE_FILL[d.defenseId] ?? "#ef4444",
-          borderRadius:    2,
+          borderRadius:    3,
           cursor:          "pointer",
           zIndex:          1,
           pointerEvents:   "none",
           opacity:         destroyed ? 0.1 : 1,
-          transition:      "opacity 0.2s",
+          outline:         hovered ? `2px solid ${DEFENSE_FILL[d.defenseId] ?? "#ef4444"}` : "none",
+          outlineOffset:   "2px",
+          transition:      "opacity 0.2s, outline 0.1s",
         }}
       />
     );
@@ -499,6 +518,8 @@ function BattleGrid({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       onClick={onClick}
+      onMouseMove={onMouseMove}
+      onMouseLeave={() => setHoveredDefenseId(null)}
     >
       {/* Defense markers */}
       {defenseSquares}
@@ -530,6 +551,41 @@ function BattleGrid({
             rx={2}
           />
         )}
+        {/* Range circle for hovered defense */}
+        {(() => {
+          if (!hoveredDefenseId) return null;
+          const d         = placed.find((p) => p.instanceId === hoveredDefenseId);
+          if (!d) return null;
+          const defData   = DEFENSES.find((def) => def.id === d.defenseId);
+          if (!defData) return null;
+          const levelData = defData.levels.find((l) => l.level === d.level);
+          if (!levelData) return null;
+          const size      = defData.size ?? 1;
+          const cx        = (d.x + size / 2) * CELL;
+          const cy        = (d.y + size / 2) * CELL;
+          const maxR      = levelData.maxRange * CELL;
+          const minR      = levelData.minRange * CELL;
+          const color     = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
+          // Two-arc SVG circle path (works as compound path for evenodd donut)
+          const arc = (r: number) =>
+            `M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${2 * r} 0 a ${r} ${r} 0 1 0 ${-2 * r} 0`;
+          return (
+            <g>
+              {/* Filled zone — donut if minRange > 0, full disk otherwise */}
+              <path
+                d={minR > 0 ? `${arc(maxR)} ${arc(minR)}` : arc(maxR)}
+                fillRule="evenodd"
+                fill={`${color}30`}
+              />
+              {/* Outer ring */}
+              <circle cx={cx} cy={cy} r={maxR} fill="none" stroke={color} strokeWidth={1.5} strokeOpacity={0.65} />
+              {/* Dead-zone ring (minRange) */}
+              {minR > 0 && (
+                <circle cx={cx} cy={cy} r={minR} fill="none" stroke={color} strokeWidth={1} strokeOpacity={0.55} strokeDasharray="5 3" />
+              )}
+            </g>
+          );
+        })()}
         {/* Replay: animated troop dots */}
         {replayDots?.map((dot) => (
           <g key={dot.id}>
