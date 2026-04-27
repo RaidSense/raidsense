@@ -293,6 +293,30 @@ export default function SimulatorPanel() {
     return beams.length ? beams : undefined;
   }, [showReplay, result, replayTime, cellSize]);
 
+  // Lines from each alive troop to its current target defense during replay
+  const targetLines = useMemo(() => {
+    if (!showReplay || !result || !meta.length) return undefined;
+    const s = Math.floor(replayTime);
+    return meta.flatMap((m) => {
+      const tr = result.troops[m.instanceId];
+      if (!tr) return [];
+      const pos = interpolatePosition(tr.positionPerSecond, replayTime, tr.destroyedAt);
+      if (!pos) return [];
+      const targetDefId = tr.targetPerSecond[Math.min(s, tr.targetPerSecond.length - 1)];
+      if (!targetDefId) return [];
+      const defense = placed.find((d) => d.instanceId === targetDefId);
+      if (!defense) return [];
+      const size = DEFENSES.find((def) => def.id === defense.defenseId)?.size ?? 1;
+      return [{
+        x1: (pos.x + 0.5) * cellSize,
+        y1: (pos.y + 0.5) * cellSize,
+        x2: (defense.x + size / 2) * cellSize,
+        y2: (defense.y + size / 2) * cellSize,
+        color: m.colorHex,
+      }];
+    });
+  }, [showReplay, result, meta, placed, replayTime, cellSize]);
+
   const totalTroops = troopSlots.reduce((s, sl) => s + sl.count, 0);
 
   function clearResult() {
@@ -436,6 +460,7 @@ export default function SimulatorPanel() {
             replayDestroyedIds={replayDestroyedIds}
             activeProjectiles={activeProjectiles}
             infernoBeams={infernoBeams}
+            targetLines={targetLines}
             onCellSizeChange={setCellSize}
             result={result}
             replayTime={replayTime}
@@ -545,6 +570,7 @@ function BattleGrid({
   replayDestroyedIds,
   activeProjectiles,
   infernoBeams,
+  targetLines,
   onMove,
   onModeToggle,
   onCellSizeChange,
@@ -558,6 +584,7 @@ function BattleGrid({
   replayDestroyedIds?: Set<string>;
   activeProjectiles?: { x: number; y: number; color: string }[];
   infernoBeams?: { x1: number; y1: number; x2: number; y2: number; stage: 0|1|2 }[];
+  targetLines?:  { x1: number; y1: number; x2: number; y2: number; color: string }[];
   onMove?: (instanceId: string, toX: number, toY: number) => void;
   onModeToggle?: (instanceId: string) => void;
   onCellSizeChange?: (size: number) => void;
@@ -818,6 +845,24 @@ function BattleGrid({
             </g>
           );
         })()}
+        {/* Defense hitboxes — white outline on full size×size footprint */}
+        {placed.map((d) => {
+          const size = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
+          return (
+            <rect key={`hb-${d.instanceId}`}
+              x={d.x * cellPx + 0.5} y={d.y * cellPx + 0.5}
+              width={size * cellPx - 1} height={size * cellPx - 1}
+              fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth={0.75}
+            />
+          );
+        })}
+        {/* Target lines: troop → current defense (replay) */}
+        {targetLines?.map((l, i) => (
+          <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+            stroke={l.color} strokeWidth={0.75} strokeOpacity={0.5}
+            strokeDasharray="3 2"
+          />
+        ))}
         {/* Defense HP bars (replay only, step at second boundaries) */}
         {replayResult && placed.map((d) => {
           const defData  = DEFENSES.find((def) => def.id === d.defenseId);
@@ -863,6 +908,9 @@ function BattleGrid({
           const hpColor = dot.hpPct > 0.6 ? "#22c55e" : dot.hpPct > 0.3 ? "#f59e0b" : "#ef4444";
           return (
             <g key={dot.id}>
+              {/* Troop hitbox — white ring */}
+              <circle cx={dot.cx} cy={dot.cy} r={5.5}
+                fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth={0.75} />
               <circle cx={dot.cx} cy={dot.cy} r={5} fill={dot.fill} stroke="rgba(0,0,0,0.6)" strokeWidth={1} />
               <text
                 x={dot.cx} y={dot.cy + 1}
@@ -1189,6 +1237,42 @@ function ResultsSection({
           <HpTable result={result} meta={meta} />
         </div>
       </div>
+
+      {/* Combat logs */}
+      {result.targetChanges.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs text-slate-500">Logs de combat — changements de cible ({result.targetChanges.length})</p>
+          <div className="max-h-48 overflow-y-auto rounded-xl bg-slate-950 p-3 space-y-0.5 font-mono text-xs">
+            {result.targetChanges.map((ev, i) => {
+              const troopMeta = meta.find((m) => m.instanceId === ev.troopInstId);
+              const label     = troopMeta?.label ?? ev.troopId;
+              const color     = troopMeta?.color ?? "text-slate-400";
+              const oldDef    = placed.find((d) => d.instanceId === ev.oldTargetId);
+              const newDef    = placed.find((d) => d.instanceId === ev.newTargetId);
+              const oldName   = oldDef ? `${DEFENSES.find((d) => d.id === oldDef.defenseId)?.name ?? oldDef.defenseId} Lv${oldDef.level}` : "—";
+              const newName   = newDef ? `${DEFENSES.find((d) => d.id === newDef.defenseId)?.name ?? newDef.defenseId} Lv${newDef.level}` : "—";
+              const reasonLabel = ev.reason === "initial" ? "1ère cible" : ev.reason === "destroyed" ? "détruite" : "plus de cible";
+              return (
+                <div key={i} className="flex items-baseline gap-1.5 text-slate-400">
+                  <span className="text-slate-600 flex-shrink-0">t={ev.time.toFixed(1)}s</span>
+                  <span className={`font-semibold flex-shrink-0 ${color}`}>{label}</span>
+                  <span className="text-slate-600">→</span>
+                  {ev.reason === "initial" ? (
+                    <span className="text-emerald-400">{newName}</span>
+                  ) : (
+                    <>
+                      <span className="line-through text-slate-600">{oldName}</span>
+                      <span className="text-slate-600">→</span>
+                      <span className={ev.newTargetId ? "text-amber-400" : "text-red-500"}>{newName}</span>
+                    </>
+                  )}
+                  <span className="text-slate-700 ml-auto flex-shrink-0">({reasonLabel})</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

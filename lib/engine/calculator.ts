@@ -134,14 +134,23 @@ export interface ShotEvent {
   troopPos:     Vec2;
 }
 
+/** A troop switching from one defense target to another. */
+export interface TargetChangeEvent {
+  time:        number;
+  troopInstId: string;
+  troopId:     string;         // type label (e.g. "giant")
+  oldTargetId: string | null;
+  newTargetId: string | null;
+  reason:      "initial" | "destroyed" | "no_targets";
+}
+
 /** Full simulation output. */
 export interface SimulationResult {
   troops: Record<string, TroopResult>;
   defenses: Record<string, DefenseResult>;
-  /** How many seconds the simulation actually ran before termination. */
   durationSeconds: number;
-  /** Every discrete shot fired by a defense during the simulation. */
   shots: ShotEvent[];
+  targetChanges: TargetChangeEvent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +392,8 @@ export function simulateAttack(
   // 4. Simulation loop
   // -------------------------------------------------------------------------
 
-  const shots: ShotEvent[] = [];
+  const shots:         ShotEvent[]         = [];
+  const targetChanges: TargetChangeEvent[] = [];
 
   function fireShot(
     def:     DefenseState,
@@ -520,10 +530,25 @@ export function simulateAttack(
     for (const troop of troops.values()) {
       if (!troop.alive) continue;
 
+      const prevTargetId = troop.targetId;
+
       // Reacquire target if current one is destroyed.
       const currentDef = troop.targetId ? defenses.get(troop.targetId) : undefined;
       if (!currentDef?.alive) {
         troop.targetId = pickTroopTarget(troop);
+        if (troop.targetId !== prevTargetId) {
+          const reason: TargetChangeEvent["reason"] =
+            prevTargetId === null ? "initial" :
+            troop.targetId === null ? "no_targets" : "destroyed";
+          targetChanges.push({
+            time:        simTime,
+            troopInstId: troop.instanceId,
+            troopId:     troop.troopId,
+            oldTargetId: prevTargetId,
+            newTargetId: troop.targetId,
+            reason,
+          });
+        }
       }
 
       if (troop.targetId === null) continue; // all defenses down
@@ -604,5 +629,6 @@ export function simulateAttack(
     defenses: defenseResults,
     durationSeconds: Math.round(lastSimTime * 10) / 10,
     shots,
+    targetChanges,
   };
 }
