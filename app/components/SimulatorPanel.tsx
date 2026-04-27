@@ -421,7 +421,7 @@ function BattleGrid({
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell,          setDragCell]          = useState<string | null>(null);
   const [hoveredDefenseId,  setHoveredDefenseId]  = useState<string | null>(null);
-  const [measured,          setMeasured]          = useState<number>(CELL);
+  const [cellPx, setCellPx] = useState<number>(CELL);
 
   // Measure container width → derive cell size; fire onCellSizeChange
   useEffect(() => {
@@ -430,7 +430,7 @@ function BattleGrid({
     const update = (width: number) => {
       if (width <= 0) return;
       const cs = width / GRID_SIZE;
-      setMeasured(cs);
+      setCellPx(cs);
       onCellSizeChange?.(cs);
     };
     update(el.clientWidth);
@@ -439,16 +439,13 @@ function BattleGrid({
     return () => ro.disconnect();
   }, [onCellSizeChange]);
 
-  // Shadow module constants with measured values — all code below uses these
-  // eslint-disable-next-line @typescript-eslint/no-shadow
-  const CELL = measured;
-  const W    = CELL * GRID_SIZE;
+  const W = cellPx * GRID_SIZE;
 
   function cellAt(e: { clientX: number; clientY: number }) {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return null;
-    const x = Math.floor((e.clientX - rect.left) / CELL);
-    const y = Math.floor((e.clientY - rect.top)  / CELL);
+    const x = Math.floor((e.clientX - rect.left) / cellPx);
+    const y = Math.floor((e.clientY - rect.top)  / cellPx);
     return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE ? { x, y } : null;
   }
 
@@ -506,10 +503,10 @@ function BattleGrid({
         title={`${name} Lv${d.level} (${d.x}, ${d.y}) — cliquer pour supprimer`}
         style={{
           position:        "absolute",
-          left:            d.x * CELL + 1,
-          top:             d.y * CELL + 1,
-          width:           size * CELL - 2,
-          height:          size * CELL - 2,
+          left:            d.x * cellPx + 1,
+          top:             d.y * cellPx + 1,
+          width:           size * cellPx - 2,
+          height:          size * cellPx - 2,
           backgroundColor: DEFENSE_FILL[d.defenseId] ?? "#ef4444",
           borderRadius:    3,
           cursor:          "pointer",
@@ -535,7 +532,7 @@ function BattleGrid({
           "linear-gradient(to right,  #1e293b 1px, transparent 1px)",
           "linear-gradient(to bottom, #1e293b 1px, transparent 1px)",
         ].join(","),
-        backgroundSize:  `${CELL}px ${CELL}px`,
+        backgroundSize:  `${cellPx}px ${cellPx}px`,
         backgroundColor: "#0f172a",
         cursor:          "crosshair",
       }}
@@ -553,10 +550,10 @@ function BattleGrid({
       <svg className="absolute inset-0 pointer-events-none" width="100%" height="100%">
         {/* Drop zone: south border band (tiles 41-43) */}
         <rect
-          x={DROP_X_MIN * CELL}
-          y={(GRID_SIZE - 3) * CELL}
-          width={(DROP_X_MAX - DROP_X_MIN + 1) * CELL}
-          height={3 * CELL}
+          x={DROP_X_MIN * cellPx}
+          y={(GRID_SIZE - 3) * cellPx}
+          width={(DROP_X_MAX - DROP_X_MIN + 1) * cellPx}
+          height={3 * cellPx}
           fill="rgba(251,191,36,0.05)"
           stroke="#f59e0b"
           strokeWidth={1.5}
@@ -566,10 +563,10 @@ function BattleGrid({
         {/* Drag-over cell highlight */}
         {dragCell && (
           <rect
-            x={parseInt(dragCell.split(",")[0]) * CELL + 1}
-            y={parseInt(dragCell.split(",")[1]) * CELL + 1}
-            width={CELL - 2}
-            height={CELL - 2}
+            x={parseInt(dragCell.split(",")[0]) * cellPx + 1}
+            y={parseInt(dragCell.split(",")[1]) * cellPx + 1}
+            width={cellPx - 2}
+            height={cellPx - 2}
             fill="rgba(251,191,36,0.2)"
             stroke="#f59e0b"
             strokeWidth={1.5}
@@ -586,10 +583,10 @@ function BattleGrid({
           const levelData = defData.levels.find((l) => l.level === d.level);
           if (!levelData) return null;
           const size      = defData.size ?? 1;
-          const cx        = (d.x + size / 2) * CELL;
-          const cy        = (d.y + size / 2) * CELL;
-          const maxR      = levelData.maxRange * CELL;
-          const minR      = levelData.minRange * CELL;
+          const cx        = (d.x + size / 2) * cellPx;
+          const cy        = (d.y + size / 2) * cellPx;
+          const maxR      = levelData.maxRange * cellPx;
+          const minR      = levelData.minRange * cellPx;
           const color     = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
           // Two-arc SVG circle path (works as compound path for evenodd donut)
           const arc = (r: number) =>
