@@ -14,8 +14,7 @@ import type {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const GRID_SIZE  = 44;
-const GRID_PX    = 440;                 // total grid side in pixels (single source of truth)
-const CELL       = GRID_PX / GRID_SIZE; // 14 px per tile — drives ALL size/range calculations
+const CELL       = 10; // fallback px/tile before ResizeObserver fires in BattleGrid
 const DROP_Y     = GRID_SIZE - 1;       // south border tile (43)
 const DROP_X_MIN = 4;
 const DROP_X_MAX = GRID_SIZE - 5;       // 39
@@ -159,6 +158,7 @@ export default function SimulatorPanel() {
   const [palLevels, setPalLevels] = useState<Record<string, number>>(PALETTE_DEFAULTS);
   const [result, setResult]       = useState<SimulationResult | null>(null);
   const [meta, setMeta]           = useState<TroopMeta[]>([]);
+  const [cellSize, setCellSize]   = useState<number>(CELL); // updated by BattleGrid ResizeObserver
 
   // ── Replay state ────────────────────────────────────────────────────────────
   const [showReplay,    setShowReplay]    = useState(false);
@@ -199,9 +199,9 @@ export default function SimulatorPanel() {
       if (!tr) return [];
       const pos = interpolatePosition(tr.positionPerSecond, replayTime, tr.destroyedAt);
       if (!pos) return [];
-      return [{ id: m.instanceId, cx: (pos.x + 0.5) * CELL, cy: (pos.y + 0.5) * CELL, fill: m.colorHex, label: m.label }];
+      return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label }];
     });
-  }, [showReplay, result, meta, replayTime]);
+  }, [showReplay, result, meta, replayTime, cellSize]);
 
   // Set of defense instanceIds destroyed before current replay time
   const replayDestroyedIds = useMemo(() => {
@@ -296,7 +296,7 @@ export default function SimulatorPanel() {
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
 
         {/* Grid */}
-        <div className="flex-shrink-0 space-y-2">
+        <div className="min-w-0 flex-1 space-y-2" style={{ maxWidth: 560 }}>
           <p className="text-xs text-slate-500">
             Glisser une défense depuis le panneau → poser sur la grille &nbsp;·&nbsp; Cliquer sur une défense pour la supprimer
           </p>
@@ -306,6 +306,7 @@ export default function SimulatorPanel() {
             onRemove={handleRemove}
             replayDots={replayDots}
             replayDestroyedIds={replayDestroyedIds}
+            onCellSizeChange={setCellSize}
           />
           <p className="text-xs text-slate-600">
             Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp; bande = zone de drop (bord sud) &nbsp;·&nbsp; {placed.length}/{MAX_DEFENSES} défenses
@@ -392,8 +393,7 @@ export default function SimulatorPanel() {
 // CSS background-image pour les lignes de grille (0 div par cellule).
 // Défenses = divs absolus (max 8). SVG overlay = anneau + highlight.
 // Event delegation sur le container pour drag & click.
-
-const W = GRID_PX; // 616 px — equals GRID_SIZE * CELL by construction
+// W et CELL sont calculés dynamiquement dans BattleGrid via ResizeObserver.
 
 interface ReplayDot {
   id: string;
@@ -409,16 +409,40 @@ function BattleGrid({
   onRemove,
   replayDots,
   replayDestroyedIds,
+  onCellSizeChange,
 }: {
   placed: PlacedDefense[];
   onPlace: (x: number, y: number, defenseId: string, level: number) => void;
   onRemove: (instanceId: string) => void;
   replayDots?: ReplayDot[];
   replayDestroyedIds?: Set<string>;
+  onCellSizeChange?: (size: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell,          setDragCell]          = useState<string | null>(null);
   const [hoveredDefenseId,  setHoveredDefenseId]  = useState<string | null>(null);
+  const [measured,          setMeasured]          = useState<number>(CELL);
+
+  // Measure container width → derive cell size; fire onCellSizeChange
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = (width: number) => {
+      if (width <= 0) return;
+      const cs = width / GRID_SIZE;
+      setMeasured(cs);
+      onCellSizeChange?.(cs);
+    };
+    update(el.clientWidth);
+    const ro = new ResizeObserver(([entry]) => update(entry.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [onCellSizeChange]);
+
+  // Shadow module constants with measured values — all code below uses these
+  // eslint-disable-next-line @typescript-eslint/no-shadow
+  const CELL = measured;
+  const W    = CELL * GRID_SIZE;
 
   function cellAt(e: { clientX: number; clientY: number }) {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -505,8 +529,8 @@ function BattleGrid({
       ref={containerRef}
       className="relative rounded-lg border border-slate-700 overflow-hidden"
       style={{
-        width:           W,
-        height:          W,
+        width:           "100%",
+        aspectRatio:     "1 / 1",
         backgroundImage: [
           "linear-gradient(to right,  #1e293b 1px, transparent 1px)",
           "linear-gradient(to bottom, #1e293b 1px, transparent 1px)",
@@ -526,7 +550,7 @@ function BattleGrid({
       {defenseSquares}
 
       {/* SVG: drop ring + drag highlight */}
-      <svg className="absolute inset-0 pointer-events-none" width={W} height={W}>
+      <svg className="absolute inset-0 pointer-events-none" width="100%" height="100%">
         {/* Drop zone: south border band (tiles 41-43) */}
         <rect
           x={DROP_X_MIN * CELL}
