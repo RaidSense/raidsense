@@ -105,6 +105,8 @@ export interface TroopResult {
 /** Per-defense simulation output. */
 export interface DefenseResult {
   instanceId: string;
+  /** HP snapshot at t = 0, 1, 2, … seconds (same convention as TroopResult). */
+  hpPerSecond: number[];
   /** Exact simulation time in seconds when this defense was destroyed. Null if survived. */
   destroyedAt: number | null;
   /** Cumulative damage actually dealt (no overkill inflation). */
@@ -182,6 +184,7 @@ interface DefenseState {
   attackCooldown:     number;
   burstRemaining:     number;   // Eagle Artillery burst; -1 = N/A
   interBurstCooldown: number;
+  hpHistory:          number[];  // per-second HP snapshots
   // ── X-Bow / Inferno Tower mode ──────────────────────────────────────────
   mode:               string;   // "" | "ground" | "both" | "single" | "multi"
   // Inferno Tower single-target ramp-up
@@ -286,7 +289,8 @@ export function simulateAttack(
     // X-Bow: adjust range and target type by mode
     let maxRange   = levelData.maxRange;
     let targetType = defData.targetType;
-    if (isXbow && mode === "both") { maxRange = 11.5; targetType = "Ground & Air"; }
+    if (isXbow    && mode === "both")  { maxRange = 11.5; targetType = "Ground & Air"; }
+    if (isInferno && mode === "multi") { maxRange = 10; }
 
     defenses.set(pl.instanceId, {
       instanceId:         pl.instanceId,
@@ -301,6 +305,7 @@ export function simulateAttack(
       alive:              true,
       destroyedAt:        null,
       totalDamageDealt:   0,
+      hpHistory:          [],
       attackSpeed:        defData.attackSpeed,
       attackCooldown:     0,
       burstRemaining:     isEagle ? EAGLE_BURST_SIZE : -1,
@@ -369,6 +374,9 @@ export function simulateAttack(
     troop.hpHistory.push(Math.ceil(troop.hp));
     troop.targetHistory.push(troop.targetId);
     troop.positionHistory.push({ ...troop.position });
+  }
+  for (const def of defenses.values()) {
+    def.hpHistory.push(Math.ceil(def.hp));
   }
 
   // -------------------------------------------------------------------------
@@ -552,6 +560,9 @@ export function simulateAttack(
         troop.targetHistory.push(troop.alive ? troop.targetId : null);
         troop.positionHistory.push({ ...troop.position });
       }
+      for (const def of defenses.values()) {
+        def.hpHistory.push(def.alive ? Math.ceil(def.hp) : 0);
+      }
     }
 
     // --- Termination check ---------------------------------------------------
@@ -581,8 +592,9 @@ export function simulateAttack(
   const defenseResults: Record<string, DefenseResult> = {};
   for (const [id, def] of defenses) {
     defenseResults[id] = {
-      instanceId: id,
-      destroyedAt: def.destroyedAt,
+      instanceId:       id,
+      hpPerSecond:      def.hpHistory,
+      destroyedAt:      def.destroyedAt,
       totalDamageDealt: Math.round(def.totalDamageDealt),
     };
   }

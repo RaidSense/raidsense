@@ -366,6 +366,27 @@ export default function SimulatorPanel() {
     clearResult();
   }
 
+  function handleMove(instanceId: string, toX: number, toY: number) {
+    setPlaced((prev) => {
+      const defense = prev.find((d) => d.instanceId === instanceId);
+      if (!defense) return prev;
+      const newSize = DEFENSES.find((d) => d.id === defense.defenseId)?.size ?? 1;
+      if (toX + newSize > GRID_SIZE || toY + newSize > GRID_SIZE) return prev;
+      const others = prev.filter((d) => d.instanceId !== instanceId);
+      const overlaps = others.some((d) => {
+        const s = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
+        return !(d.x + s <= toX || toX + newSize <= d.x || d.y + s <= toY || toY + newSize <= d.y);
+      });
+      if (overlaps) return prev;
+      return prev.map((d) => d.instanceId === instanceId ? { ...d, x: toX, y: toY } : d);
+    });
+    // Stop replay/simulation when a building is moved
+    setReplayPlaying(false);
+    setShowReplay(false);
+    setResult(null);
+    setMeta([]);
+  }
+
   function handleSimulate() {
     if (!placed.length || !totalTroops) return;
     const { deployments, meta: m } = buildDeployments(troopSlots);
@@ -409,12 +430,14 @@ export default function SimulatorPanel() {
             placed={placed}
             onPlace={handlePlace}
             onRemove={handleRemove}
+            onMove={handleMove}
             onModeToggle={handleModeToggle}
             replayDots={replayDots}
             replayDestroyedIds={replayDestroyedIds}
             activeProjectiles={activeProjectiles}
             infernoBeams={infernoBeams}
             onCellSizeChange={setCellSize}
+            result={result}
           />
           <p className="text-xs text-slate-600">
             Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp; bande = zone de drop (bord sud) &nbsp;·&nbsp; {placed.length}/{MAX_DEFENSES} défenses
@@ -521,8 +544,10 @@ function BattleGrid({
   replayDestroyedIds,
   activeProjectiles,
   infernoBeams,
+  onMove,
   onModeToggle,
   onCellSizeChange,
+  result: replayResult,
 }: {
   placed: PlacedDefense[];
   onPlace: (x: number, y: number, defenseId: string, level: number) => void;
@@ -531,8 +556,10 @@ function BattleGrid({
   replayDestroyedIds?: Set<string>;
   activeProjectiles?: { x: number; y: number; color: string }[];
   infernoBeams?: { x1: number; y1: number; x2: number; y2: number; stage: 0|1|2 }[];
+  onMove?: (instanceId: string, toX: number, toY: number) => void;
   onModeToggle?: (instanceId: string) => void;
   onCellSizeChange?: (size: number) => void;
+  result?: import("../../lib/engine/calculator").SimulationResult | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell,          setDragCell]          = useState<string | null>(null);
@@ -595,8 +622,13 @@ function BattleGrid({
     setDragCell(null);
     if (!c) return;
     try {
-      const { defenseId, level } = JSON.parse(e.dataTransfer.getData("text/plain"));
-      onPlace(c.x, c.y, defenseId, level);
+      const payload = JSON.parse(e.dataTransfer.getData("text/plain"));
+      if (payload.existingInstanceId) {
+        // Moving an already-placed defense
+        onMove?.(payload.existingInstanceId, c.x, c.y);
+      } else {
+        onPlace(c.x, c.y, payload.defenseId, payload.level);
+      }
     } catch { /* bad payload */ }
   }
 
@@ -627,7 +659,10 @@ function BattleGrid({
     return (
       <div
         key={d.instanceId}
-        title={`${name} Lv${d.level} (${d.x},${d.y}) — clic: supprimer`}
+        draggable
+        title={`${name} Lv${d.level} (${d.x},${d.y}) — glisser: déplacer · clic: supprimer`}
+        onDragStart={(e) => defDragStart(e, d, size)}
+        onClick={(e) => { e.stopPropagation(); onRemove(d.instanceId); }}
         style={{
           position:        "absolute",
           left:            d.x * cellPx + 1,
@@ -636,9 +671,9 @@ function BattleGrid({
           height:          pxSize,
           backgroundColor: fill,
           borderRadius:    3,
-          cursor:          "pointer",
+          cursor:          "grab",
           zIndex:          1,
-          pointerEvents:   "none",
+          pointerEvents:   "auto",
           opacity:         destroyed ? 0.1 : 1,
           outline:         hovered ? `2px solid ${fill}` : "none",
           outlineOffset:   "2px",
@@ -674,6 +709,19 @@ function BattleGrid({
       </div>
     );
   });
+
+  // Drag-start handler for already-placed defenses (move gesture)
+  function defDragStart(e: React.DragEvent, d: PlacedDefense, size: number) {
+    e.dataTransfer.setData("text/plain", JSON.stringify({ existingInstanceId: d.instanceId, defenseId: d.defenseId, level: d.level, mode: d.mode }));
+    e.dataTransfer.effectAllowed = "move";
+    const fill   = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
+    const tilePx = Math.round(cellPx * size);
+    const ghost  = document.createElement("div");
+    ghost.style.cssText = `width:${tilePx}px;height:${tilePx}px;background:${fill};border-radius:4px;opacity:0.85;position:fixed;top:-${tilePx*2}px;left:0;pointer-events:none;`;
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, tilePx / 2, tilePx / 2);
+    setTimeout(() => document.body.removeChild(ghost), 0);
+  }
 
   return (
     <div
@@ -739,7 +787,12 @@ function BattleGrid({
           const size      = defData.size ?? 1;
           const cx        = (d.x + size / 2) * cellPx;
           const cy        = (d.y + size / 2) * cellPx;
-          const maxR      = levelData.maxRange * cellPx;
+          // Effective range depends on mode
+          const effectiveMax =
+            d.defenseId === "x-bow"          && d.mode === "both"   ? 11.5 :
+            d.defenseId === "inferno-tower"  && d.mode !== "single" ? 10   :
+            levelData.maxRange;
+          const maxR      = effectiveMax * cellPx;
           const minR      = levelData.minRange * cellPx;
           const color     = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
           // Two-arc SVG circle path (works as compound path for evenodd donut)
@@ -762,6 +815,29 @@ function BattleGrid({
             </g>
           );
         })()}
+        {/* Defense HP bars (replay only, step at second boundaries) */}
+        {replayResult && placed.map((d) => {
+          const defData  = DEFENSES.find((def) => def.id === d.defenseId);
+          if (!defData) return null;
+          const size     = defData.size ?? 1;
+          const maxHp    = defData.levels.find((l) => l.level === d.level)?.hp ?? 1;
+          const dr       = replayResult.defenses[d.instanceId];
+          if (!dr) return null;
+          const s        = Math.min(Math.floor(replayTime), dr.hpPerSecond.length - 1);
+          const hp       = dr.hpPerSecond[s] ?? maxHp;
+          const pct      = Math.max(0, Math.min(1, hp / maxHp));
+          const BAR_W    = size * cellPx - 4;
+          const BAR_H    = 2;
+          const barX     = d.x * cellPx + 2;
+          const barY     = (d.y + size) * cellPx - BAR_H - 1;
+          const barColor = pct > 0.6 ? "#22c55e" : pct > 0.3 ? "#f59e0b" : "#ef4444";
+          return (
+            <g key={`hp-${d.instanceId}`}>
+              <rect x={barX} y={barY} width={BAR_W} height={BAR_H} rx={1} fill="rgba(0,0,0,0.45)" />
+              <rect x={barX} y={barY} width={BAR_W * pct} height={BAR_H} rx={1} fill={barColor} />
+            </g>
+          );
+        })}
         {/* Inferno Tower beams */}
         {infernoBeams?.map((b, i) => {
           const sw    = b.stage === 2 ? 3 : b.stage === 1 ? 2 : 1;
