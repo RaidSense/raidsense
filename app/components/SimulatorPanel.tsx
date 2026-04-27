@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { TROOPS } from "../../lib/data/troops";
 import { DEFENSES } from "../../lib/data/defenses";
 import { simulateAttack } from "../../lib/engine/calculator";
@@ -13,10 +13,11 @@ import type {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const GRID_SIZE    = 44;
-const CELL         = 14;            // px per tile → 44 × 14 = 616 px
-const DROP_CENTER: Vec2 = { x: 22, y: 22 };
-const DROP_RADIUS  = 5;
+const GRID_SIZE       = 44;
+const CELL            = 14;   // px per tile → 44 × 14 = 616 px
+const DROP_Y          = GRID_SIZE - 1; // south border tile (43)
+const DROP_X_MIN      = 4;
+const DROP_X_MAX      = GRID_SIZE - 5; // 39
 const MAX_TROOP_SLOTS = 5;
 const MAX_DEFENSES    = 8;
 
@@ -31,6 +32,10 @@ const TROOP_ABBREV: Record<string, string> = {
 const TROOP_COLORS = [
   "text-amber-400", "text-sky-400", "text-emerald-400",
   "text-violet-400", "text-rose-400",
+] as const;
+
+const TROOP_COLORS_HEX = [
+  "#fbbf24", "#38bdf8", "#34d399", "#a78bfa", "#fb7185",
 ] as const;
 
 const DEFENSE_FILL: Record<string, string> = {
@@ -75,26 +80,40 @@ interface TroopMeta {
   maxHp: number;
   label: string;
   color: string;
+  colorHex: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function ringPositions(total: number): Vec2[] {
+function borderPositions(total: number): Vec2[] {
   if (total === 0) return [];
-  return Array.from({ length: total }, (_, i) => {
-    const a = (2 * Math.PI * i) / total - Math.PI / 2;
-    return {
-      x: Math.round((DROP_CENTER.x + DROP_RADIUS * Math.cos(a)) * 10) / 10,
-      y: Math.round((DROP_CENTER.y + DROP_RADIUS * Math.sin(a)) * 10) / 10,
-    };
-  });
+  if (total === 1) return [{ x: Math.floor(GRID_SIZE / 2), y: DROP_Y }];
+  const span = DROP_X_MAX - DROP_X_MIN;
+  return Array.from({ length: total }, (_, i) => ({
+    x: Math.round((DROP_X_MIN + (i / (total - 1)) * span) * 10) / 10,
+    y: DROP_Y,
+  }));
+}
+
+function interpolatePosition(
+  positions: Vec2[],
+  t: number,
+  destroyedAt: number | null,
+): Vec2 | null {
+  if (destroyedAt !== null && t >= destroyedAt) return null;
+  if (positions.length === 0) return null;
+  const s    = Math.floor(t);
+  const frac = t - s;
+  const p0   = positions[Math.min(s, positions.length - 1)];
+  const p1   = positions[Math.min(s + 1, positions.length - 1)];
+  return { x: p0.x + (p1.x - p0.x) * frac, y: p0.y + (p1.y - p0.y) * frac };
 }
 
 function buildDeployments(slots: TroopSlot[]): {
   deployments: TroopDeployment[];
   meta: TroopMeta[];
 } {
-  const positions = ringPositions(slots.reduce((s, sl) => s + sl.count, 0));
+  const positions = borderPositions(slots.reduce((s, sl) => s + sl.count, 0));
   const deployments: TroopDeployment[] = [];
   const meta: TroopMeta[]              = [];
   let pi = 0;
@@ -103,12 +122,13 @@ function buildDeployments(slots: TroopSlot[]): {
     const troop = TROOPS.find((t) => t.id === slot.troopId)!;
     const lData = troop.levels.find((l) => l.level === slot.level)!;
     const abbr  = TROOP_ABBREV[slot.troopId] ?? troop.name.slice(0, 2);
-    const color = TROOP_COLORS[si % TROOP_COLORS.length];
+    const color    = TROOP_COLORS[si % TROOP_COLORS.length];
+    const colorHex = TROOP_COLORS_HEX[si % TROOP_COLORS_HEX.length];
 
     for (let i = 0; i < slot.count; i++) {
       const id = `${slot.slotId}_${i}`;
       deployments.push({ instanceId: id, troopId: slot.troopId, level: slot.level, dropPosition: positions[pi++] });
-      meta.push({ instanceId: id, slotId: slot.slotId, troopName: troop.name, maxHp: lData.hp, label: `${abbr}${i + 1}`, color });
+      meta.push({ instanceId: id, slotId: slot.slotId, troopName: troop.name, maxHp: lData.hp, label: `${abbr}${i + 1}`, color, colorHex });
     }
   });
 
@@ -139,9 +159,65 @@ export default function SimulatorPanel() {
   const [result, setResult]       = useState<SimulationResult | null>(null);
   const [meta, setMeta]           = useState<TroopMeta[]>([]);
 
+  // ── Replay state ────────────────────────────────────────────────────────────
+  const [showReplay,    setShowReplay]    = useState(false);
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const [replayTime,    setReplayTime]    = useState(0);
+  const [replaySpeed,   setReplaySpeed]   = useState<1 | 2>(1);
+  const rafRef       = useRef<number>(0);
+  const lastTsRef    = useRef<number>(0);
+  const speedRef     = useRef(replaySpeed);
+  const durationRef  = useRef(0);
+
+  useEffect(() => { speedRef.current = replaySpeed; }, [replaySpeed]);
+
+  useEffect(() => {
+    if (!replayPlaying) { cancelAnimationFrame(rafRef.current); return; }
+    lastTsRef.current = 0;
+    const tick = (ts: number) => {
+      if (lastTsRef.current > 0) {
+        const delta = (ts - lastTsRef.current) / 1000;
+        setReplayTime((prev) => {
+          const next = prev + delta * speedRef.current;
+          if (next >= durationRef.current) { setReplayPlaying(false); return durationRef.current; }
+          return next;
+        });
+      }
+      lastTsRef.current = ts;
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [replayPlaying]);
+
+  // Troop dots interpolated at current replay time
+  const replayDots = useMemo(() => {
+    if (!showReplay || !result || !meta.length) return undefined;
+    return meta.flatMap((m) => {
+      const tr = result.troops[m.instanceId];
+      if (!tr) return [];
+      const pos = interpolatePosition(tr.positionPerSecond, replayTime, tr.destroyedAt);
+      if (!pos) return [];
+      return [{ id: m.instanceId, cx: (pos.x + 0.5) * CELL, cy: (pos.y + 0.5) * CELL, fill: m.colorHex, label: m.label }];
+    });
+  }, [showReplay, result, meta, replayTime]);
+
+  // Set of defense instanceIds destroyed before current replay time
+  const replayDestroyedIds = useMemo(() => {
+    if (!showReplay || !result) return undefined;
+    const ids = new Set<string>();
+    for (const [id, dr] of Object.entries(result.defenses)) {
+      if (dr.destroyedAt !== null && replayTime >= dr.destroyedAt) ids.add(id);
+    }
+    return ids;
+  }, [showReplay, result, replayTime]);
+
   const totalTroops = troopSlots.reduce((s, sl) => s + sl.count, 0);
 
-  function clearResult() { setResult(null); setMeta([]); }
+  function clearResult() {
+    setResult(null); setMeta([]);
+    setShowReplay(false); setReplayPlaying(false); setReplayTime(0);
+  }
 
   // Troop handlers
   function updateTroopSlot(slotId: string, patch: Partial<Omit<TroopSlot, "slotId">>) {
@@ -188,7 +264,18 @@ export default function SimulatorPanel() {
     if (!placed.length || !totalTroops) return;
     const { deployments, meta: m } = buildDeployments(troopSlots);
     setMeta(m);
-    setResult(simulateAttack(deployments, buildDefensePlacements(placed)));
+    setShowReplay(false);
+    setReplayPlaying(false);
+    setReplayTime(0);
+    const r = simulateAttack(deployments, buildDefensePlacements(placed));
+    durationRef.current = r.durationSeconds;
+    setResult(r);
+  }
+
+  function startReplay() {
+    setReplayTime(0);
+    setReplayPlaying(true);
+    setShowReplay(true);
   }
 
   const survivors = result
@@ -212,9 +299,15 @@ export default function SimulatorPanel() {
           <p className="text-xs text-slate-500">
             Glisser une défense depuis le panneau → poser sur la grille &nbsp;·&nbsp; Cliquer sur une défense pour la supprimer
           </p>
-          <BattleGrid placed={placed} onPlace={handlePlace} onRemove={handleRemove} />
+          <BattleGrid
+            placed={placed}
+            onPlace={handlePlace}
+            onRemove={handleRemove}
+            replayDots={replayDots}
+            replayDestroyedIds={replayDestroyedIds}
+          />
           <p className="text-xs text-slate-600">
-            Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp; cercle = zone de drop des troupes &nbsp;·&nbsp; {placed.length}/{MAX_DEFENSES} défenses
+            Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp; bande = zone de drop (bord sud) &nbsp;·&nbsp; {placed.length}/{MAX_DEFENSES} défenses
           </p>
         </div>
 
@@ -257,6 +350,28 @@ export default function SimulatorPanel() {
         Simuler l&apos;attaque
       </button>
 
+      {/* Replay controls */}
+      {result && !showReplay && (
+        <button
+          onClick={startReplay}
+          className="w-full rounded-xl border border-amber-500/40 bg-amber-500/10 py-2.5 text-sm font-semibold text-amber-400 transition-colors hover:bg-amber-500/20"
+        >
+          ▶ Voir le replay
+        </button>
+      )}
+      {result && showReplay && (
+        <ReplayControls
+          durationSeconds={result.durationSeconds}
+          replayTime={replayTime}
+          playing={replayPlaying}
+          speed={replaySpeed}
+          onPlayPause={() => { lastTsRef.current = 0; setReplayPlaying((p) => !p); }}
+          onSpeedToggle={() => setReplaySpeed((s) => (s === 1 ? 2 : 1))}
+          onSeek={(t) => { lastTsRef.current = 0; setReplayTime(t); }}
+          onClose={() => { setShowReplay(false); setReplayPlaying(false); }}
+        />
+      )}
+
       {/* Results */}
       {result && (
         <ResultsSection
@@ -279,14 +394,26 @@ export default function SimulatorPanel() {
 
 const W = GRID_SIZE * CELL; // 616 px
 
+interface ReplayDot {
+  id: string;
+  cx: number;
+  cy: number;
+  fill: string;
+  label: string;
+}
+
 function BattleGrid({
   placed,
   onPlace,
   onRemove,
+  replayDots,
+  replayDestroyedIds,
 }: {
   placed: PlacedDefense[];
   onPlace: (x: number, y: number, defenseId: string, level: number) => void;
   onRemove: (instanceId: string) => void;
+  replayDots?: ReplayDot[];
+  replayDestroyedIds?: Set<string>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell, setDragCell] = useState<string | null>(null);
@@ -328,28 +455,30 @@ function BattleGrid({
     if (d) onRemove(d.instanceId);
   }
 
-  const defenseSquares = useMemo(() =>
-    placed.map((d) => {
-      const name = DEFENSES.find((def) => def.id === d.defenseId)?.name ?? d.defenseId;
-      return (
-        <div
-          key={d.instanceId}
-          title={`${name} Lv${d.level} (${d.x}, ${d.y}) — cliquer pour supprimer`}
-          style={{
-            position:        "absolute",
-            left:            d.x * CELL + 1,
-            top:             d.y * CELL + 1,
-            width:           CELL - 2,
-            height:          CELL - 2,
-            backgroundColor: DEFENSE_FILL[d.defenseId] ?? "#ef4444",
-            borderRadius:    2,
-            cursor:          "pointer",
-            zIndex:          1,
-            pointerEvents:   "none", // clicks handled by container
-          }}
-        />
-      );
-    }), [placed]);
+  const defenseSquares = placed.map((d) => {
+    const name      = DEFENSES.find((def) => def.id === d.defenseId)?.name ?? d.defenseId;
+    const destroyed = replayDestroyedIds?.has(d.instanceId) ?? false;
+    return (
+      <div
+        key={d.instanceId}
+        title={`${name} Lv${d.level} (${d.x}, ${d.y}) — cliquer pour supprimer`}
+        style={{
+          position:        "absolute",
+          left:            d.x * CELL + 1,
+          top:             d.y * CELL + 1,
+          width:           CELL - 2,
+          height:          CELL - 2,
+          backgroundColor: DEFENSE_FILL[d.defenseId] ?? "#ef4444",
+          borderRadius:    2,
+          cursor:          "pointer",
+          zIndex:          1,
+          pointerEvents:   "none",
+          opacity:         destroyed ? 0.1 : 1,
+          transition:      "opacity 0.2s",
+        }}
+      />
+    );
+  });
 
   return (
     <div
@@ -376,22 +505,17 @@ function BattleGrid({
 
       {/* SVG: drop ring + drag highlight */}
       <svg className="absolute inset-0 pointer-events-none" width={W} height={W}>
-        {/* Drop ring */}
-        <circle
-          cx={(DROP_CENTER.x + 0.5) * CELL}
-          cy={(DROP_CENTER.y + 0.5) * CELL}
-          r={DROP_RADIUS * CELL}
+        {/* Drop zone: south border band (tiles 41-43) */}
+        <rect
+          x={DROP_X_MIN * CELL}
+          y={(GRID_SIZE - 3) * CELL}
+          width={(DROP_X_MAX - DROP_X_MIN + 1) * CELL}
+          height={3 * CELL}
           fill="rgba(251,191,36,0.05)"
           stroke="#f59e0b"
           strokeWidth={1.5}
           strokeDasharray="5 3"
-        />
-        <circle
-          cx={(DROP_CENTER.x + 0.5) * CELL}
-          cy={(DROP_CENTER.y + 0.5) * CELL}
-          r={2.5}
-          fill="#f59e0b"
-          opacity={0.5}
+          rx={3}
         />
         {/* Drag-over cell highlight */}
         {dragCell && (
@@ -406,7 +530,97 @@ function BattleGrid({
             rx={2}
           />
         )}
+        {/* Replay: animated troop dots */}
+        {replayDots?.map((dot) => (
+          <g key={dot.id}>
+            <circle cx={dot.cx} cy={dot.cy} r={5} fill={dot.fill} stroke="rgba(0,0,0,0.6)" strokeWidth={1} />
+            <text
+              x={dot.cx} y={dot.cy + 1}
+              textAnchor="middle" dominantBaseline="middle"
+              fontSize={5} fontFamily="monospace" fontWeight="bold"
+              fill="rgba(0,0,0,0.7)"
+              style={{ pointerEvents: "none", userSelect: "none" }}
+            >
+              {dot.label}
+            </text>
+          </g>
+        ))}
       </svg>
+    </div>
+  );
+}
+
+// ── ReplayControls ─────────────────────────────────────────────────────────
+
+function ReplayControls({
+  durationSeconds, replayTime, playing, speed,
+  onPlayPause, onSpeedToggle, onSeek, onClose,
+}: {
+  durationSeconds: number;
+  replayTime: number;
+  playing: boolean;
+  speed: 1 | 2;
+  onPlayPause: () => void;
+  onSpeedToggle: () => void;
+  onSeek: (t: number) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-300">Replay</span>
+        <button
+          onClick={onClose}
+          className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          ✕ Fermer
+        </button>
+      </div>
+
+      {/* Progress slider */}
+      <div className="space-y-1">
+        <input
+          type="range"
+          min={0}
+          max={durationSeconds}
+          step={0.05}
+          value={replayTime}
+          onChange={(e) => onSeek(Number(e.target.value))}
+          className="w-full accent-amber-400 cursor-pointer"
+        />
+        <div className="flex justify-between text-xs text-slate-500">
+          <span>{replayTime.toFixed(1)} s</span>
+          <span>{durationSeconds} s</span>
+        </div>
+      </div>
+
+      {/* Buttons */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onPlayPause}
+          className="rounded-lg bg-amber-500 px-4 py-1.5 text-xs font-semibold text-slate-950 hover:bg-amber-400 active:bg-amber-600 transition-colors"
+        >
+          {playing ? "⏸ Pause" : "▶ Play"}
+        </button>
+        <button
+          onClick={onSpeedToggle}
+          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+            speed === 2
+              ? "border-amber-500 bg-amber-500/10 text-amber-400"
+              : "border-slate-700 text-slate-400 hover:border-slate-500"
+          }`}
+        >
+          ×{speed}
+        </button>
+        {!playing && replayTime >= durationSeconds && (
+          <button
+            onClick={() => onSeek(0)}
+            className="ml-auto text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            ↺ Recommencer
+          </button>
+        )}
+      </div>
     </div>
   );
 }

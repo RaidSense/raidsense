@@ -79,6 +79,11 @@ export interface TroopResult {
    * Null when idle (no targets left) or already dead.
    */
   targetPerSecond: (string | null)[];
+  /**
+   * Tile position (fractional) at t = 0, 1, 2, … seconds.
+   * Used to drive replay animations with linear interpolation between seconds.
+   */
+  positionPerSecond: Vec2[];
   /** Exact simulation time in seconds when this troop died. Null if survived. */
   destroyedAt: number | null;
 }
@@ -120,6 +125,7 @@ interface TroopState {
   destroyedAt: number | null;
   hpHistory: number[];
   targetHistory: (string | null)[];
+  positionHistory: Vec2[];
 }
 
 interface DefenseState {
@@ -206,6 +212,7 @@ export function simulateAttack(
       destroyedAt: null,
       hpHistory: [],    // populated after initial targeting below
       targetHistory: [],
+      positionHistory: [],
     });
   }
 
@@ -287,6 +294,7 @@ export function simulateAttack(
     troop.targetId = pickTroopTarget(troop);
     troop.hpHistory.push(Math.ceil(troop.hp));
     troop.targetHistory.push(troop.targetId);
+    troop.positionHistory.push({ ...troop.position });
   }
 
   // -------------------------------------------------------------------------
@@ -374,6 +382,7 @@ export function simulateAttack(
       for (const troop of troops.values()) {
         troop.hpHistory.push(troop.alive ? Math.ceil(troop.hp) : 0);
         troop.targetHistory.push(troop.alive ? troop.targetId : null);
+        troop.positionHistory.push({ ...troop.position });
       }
     }
 
@@ -396,6 +405,7 @@ export function simulateAttack(
       instanceId: id,
       hpPerSecond: troop.hpHistory,
       targetPerSecond: troop.targetHistory,
+      positionPerSecond: troop.positionHistory,
       destroyedAt: troop.destroyedAt,
     };
   }
