@@ -438,6 +438,7 @@ export default function SimulatorPanel() {
             infernoBeams={infernoBeams}
             onCellSizeChange={setCellSize}
             result={result}
+            replayTime={replayTime}
           />
           <p className="text-xs text-slate-600">
             Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp; bande = zone de drop (bord sud) &nbsp;·&nbsp; {placed.length}/{MAX_DEFENSES} défenses
@@ -548,6 +549,7 @@ function BattleGrid({
   onModeToggle,
   onCellSizeChange,
   result: replayResult,
+  replayTime,
 }: {
   placed: PlacedDefense[];
   onPlace: (x: number, y: number, defenseId: string, level: number) => void;
@@ -560,6 +562,7 @@ function BattleGrid({
   onModeToggle?: (instanceId: string) => void;
   onCellSizeChange?: (size: number) => void;
   result?: import("../../lib/engine/calculator").SimulationResult | null;
+  replayTime?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell,          setDragCell]          = useState<string | null>(null);
@@ -823,7 +826,7 @@ function BattleGrid({
           const maxHp    = defData.levels.find((l) => l.level === d.level)?.hp ?? 1;
           const dr       = replayResult.defenses[d.instanceId];
           if (!dr) return null;
-          const s        = Math.min(Math.floor(replayTime), dr.hpPerSecond.length - 1);
+          const s        = Math.min(Math.floor(replayTime ?? 0), dr.hpPerSecond.length - 1);
           const hp       = dr.hpPerSecond[s] ?? maxHp;
           const pct      = Math.max(0, Math.min(1, hp / maxHp));
           const BAR_W    = size * cellPx - 4;
