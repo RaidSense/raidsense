@@ -13,9 +13,13 @@ import type {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const GRID_SIZE    = 44;
-const CELL         = 10; // fallback px/tile before ResizeObserver fires in BattleGrid
-const DEPLOY_MARGIN = 5; // tiles from each edge that form the valid deployment zone
+const GRID_SIZE      = 44;
+const CELL           = 10; // fallback px/tile before ResizeObserver fires in BattleGrid
+const DEPLOY_MARGIN  = 5;  // tiles from each edge that form the valid deployment zone
+// Auto-drop zone along south border (used when placement mode is OFF)
+const DROP_Y         = GRID_SIZE - 1;
+const DROP_X_MIN     = DEPLOY_MARGIN;
+const DROP_X_MAX     = GRID_SIZE - DEPLOY_MARGIN - 1;
 const MAX_TROOP_SLOTS = 5;
 const MAX_DEFENSES    = 8;
 
