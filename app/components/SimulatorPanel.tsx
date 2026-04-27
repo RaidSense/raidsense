@@ -71,6 +71,8 @@ interface PlacedDefense {
   level: number;
   x: number;
   y: number;
+  /** "ground"|"both" for X-Bow, "single"|"multi" for Inferno Tower */
+  mode?: string;
 }
 
 interface TroopMeta {
@@ -142,7 +144,8 @@ function buildDefensePlacements(placed: PlacedDefense[]): DefensePlacement[] {
       instanceId: d.instanceId,
       defenseId:  d.defenseId,
       level:      d.level,
-      position:   { x: d.x + size / 2, y: d.y + size / 2 }, // centre du bâtiment
+      position:   { x: d.x + size / 2, y: d.y + size / 2 },
+      mode:       d.mode,
     };
   });
 }
@@ -195,6 +198,7 @@ export default function SimulatorPanel() {
   }, [replayPlaying]);
 
   // Troop dots interpolated at current replay time
+  // HP is computed from actual projectile impact times (shot.time + travel) — not linearly.
   const replayDots = useMemo(() => {
     if (!showReplay || !result || !meta.length) return undefined;
     return meta.flatMap((m) => {
@@ -202,11 +206,17 @@ export default function SimulatorPanel() {
       if (!tr) return [];
       const pos = interpolatePosition(tr.positionPerSecond, replayTime, tr.destroyedAt);
       if (!pos) return [];
-      const s    = Math.floor(replayTime);
-      const frac = replayTime - s;
-      const hp0  = tr.hpPerSecond[Math.min(s,     tr.hpPerSecond.length - 1)] ?? 0;
-      const hp1  = tr.hpPerSecond[Math.min(s + 1, tr.hpPerSecond.length - 1)] ?? hp0;
-      const hpPct = m.maxHp > 0 ? Math.max(0, Math.min(1, (hp0 + (hp1 - hp0) * frac) / m.maxHp)) : 0;
+      // Compute HP by subtracting impacts that have landed by replayTime
+      let hp = m.maxHp;
+      for (const shot of result.shots) {
+        if (shot.time > replayTime) break;
+        if (shot.targetInstId !== m.instanceId) continue;
+        const dx = shot.troopPos.x - shot.defPos.x;
+        const dy = shot.troopPos.y - shot.defPos.y;
+        const impactTime = shot.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
+        if (impactTime <= replayTime) hp -= shot.damage;
+      }
+      const hpPct = m.maxHp > 0 ? Math.max(0, Math.min(1, hp / m.maxHp)) : 0;
       return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label, hpPct }];
     });
   }, [showReplay, result, meta, replayTime, cellSize]);
@@ -242,6 +252,45 @@ export default function SimulatorPanel() {
       });
     }
     return out;
+  }, [showReplay, result, replayTime, cellSize]);
+
+  // Inferno Tower beams: one entry per target per active Inferno Tower
+  const infernoBeams = useMemo(() => {
+    if (!showReplay || !result?.shots?.length) return undefined;
+    const INFERNO_BEAM_TTL = 0.3; // s — beam disappears after this long without a shot
+    const beams: { x1: number; y1: number; x2: number; y2: number; stage: 0|1|2 }[] = [];
+
+    // Group shots by defense instance, look for recent Inferno activity
+    const lastShotByDef = new Map<string, { shot: (typeof result.shots)[0]; lockDuration: number }>();
+    for (const shot of result.shots) {
+      if (shot.time > replayTime) break;
+      if (shot.defenseId !== "inferno-tower") continue;
+      const prev = lastShotByDef.get(shot.defInstId);
+      if (!prev || prev.shot.targetInstId !== shot.targetInstId) {
+        // Target changed: reset lock
+        lastShotByDef.set(shot.defInstId, { shot, lockDuration: 0.128 });
+      } else {
+        lastShotByDef.set(shot.defInstId, { shot, lockDuration: prev.lockDuration + 0.128 });
+      }
+    }
+
+    for (const [, { shot, lockDuration }] of lastShotByDef) {
+      if (replayTime - shot.time > INFERNO_BEAM_TTL) continue; // beam expired
+      // Troop current position
+      const tr = result.troops[shot.targetInstId];
+      if (!tr) continue;
+      const troopPos = interpolatePosition(tr.positionPerSecond, replayTime, tr.destroyedAt);
+      if (!troopPos) continue;
+      const stage: 0|1|2 = lockDuration >= 5.25 ? 2 : lockDuration >= 1.5 ? 1 : 0;
+      beams.push({
+        x1: shot.defPos.x  * cellSize,
+        y1: shot.defPos.y  * cellSize,
+        x2: (troopPos.x + 0.5) * cellSize,
+        y2: (troopPos.y + 0.5) * cellSize,
+        stage,
+      });
+    }
+    return beams.length ? beams : undefined;
   }, [showReplay, result, replayTime, cellSize]);
 
   const totalTroops = troopSlots.reduce((s, sl) => s + sl.count, 0);
@@ -290,8 +339,25 @@ export default function SimulatorPanel() {
       });
       if (overlaps) return prev;
       if (prev.length >= MAX_DEFENSES) return prev;
-      return [...prev, { instanceId: `d-${Date.now()}`, defenseId, level, x, y }];
+      const defaultMode =
+        defenseId === "inferno-tower" ? "multi" :
+        defenseId === "x-bow"         ? "ground" : undefined;
+      return [...prev, { instanceId: `d-${Date.now()}`, defenseId, level, x, y, mode: defaultMode }];
     });
+    clearResult();
+  }
+
+  function handleModeToggle(instanceId: string) {
+    setPlaced((prev) => prev.map((d) => {
+      if (d.instanceId !== instanceId) return d;
+      if (d.defenseId === "inferno-tower") {
+        return { ...d, mode: d.mode === "single" ? "multi" : "single" };
+      }
+      if (d.defenseId === "x-bow") {
+        return { ...d, mode: d.mode === "both" ? "ground" : "both" };
+      }
+      return d;
+    }));
     clearResult();
   }
 
@@ -343,9 +409,11 @@ export default function SimulatorPanel() {
             placed={placed}
             onPlace={handlePlace}
             onRemove={handleRemove}
+            onModeToggle={handleModeToggle}
             replayDots={replayDots}
             replayDestroyedIds={replayDestroyedIds}
             activeProjectiles={activeProjectiles}
+            infernoBeams={infernoBeams}
             onCellSizeChange={setCellSize}
           />
           <p className="text-xs text-slate-600">
@@ -452,6 +520,8 @@ function BattleGrid({
   replayDots,
   replayDestroyedIds,
   activeProjectiles,
+  infernoBeams,
+  onModeToggle,
   onCellSizeChange,
 }: {
   placed: PlacedDefense[];
@@ -460,6 +530,8 @@ function BattleGrid({
   replayDots?: ReplayDot[];
   replayDestroyedIds?: Set<string>;
   activeProjectiles?: { x: number; y: number; color: string }[];
+  infernoBeams?: { x1: number; y1: number; x2: number; y2: number; stage: 0|1|2 }[];
+  onModeToggle?: (instanceId: string) => void;
   onCellSizeChange?: (size: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -535,33 +607,71 @@ function BattleGrid({
     if (d) { setHoveredDefenseId(null); onRemove(d.instanceId); }
   }
 
+  const isModeCapable = (defId: string) => defId === "x-bow" || defId === "inferno-tower";
+  const modeLabel = (d: PlacedDefense) => {
+    if (d.defenseId === "inferno-tower") return d.mode === "single" ? "S" : "M";
+    if (d.defenseId === "x-bow")         return d.mode === "both"   ? "A" : "G";
+    return "";
+  };
+
   const defenseSquares = placed.map((d) => {
     const defData   = DEFENSES.find((def) => def.id === d.defenseId);
     const name      = defData?.name ?? d.defenseId;
     const size      = defData?.size ?? 1;
     const destroyed = replayDestroyedIds?.has(d.instanceId) ?? false;
     const hovered   = hoveredDefenseId === d.instanceId;
+    const fill      = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
+    const pxSize    = size * cellPx - 2;
+    const fontSize  = Math.max(6, Math.min(11, pxSize * 0.35));
+
     return (
       <div
         key={d.instanceId}
-        title={`${name} Lv${d.level} (${d.x}, ${d.y}) — cliquer pour supprimer`}
+        title={`${name} Lv${d.level} (${d.x},${d.y}) — clic: supprimer`}
         style={{
           position:        "absolute",
           left:            d.x * cellPx + 1,
           top:             d.y * cellPx + 1,
-          width:           size * cellPx - 2,
-          height:          size * cellPx - 2,
-          backgroundColor: DEFENSE_FILL[d.defenseId] ?? "#ef4444",
+          width:           pxSize,
+          height:          pxSize,
+          backgroundColor: fill,
           borderRadius:    3,
           cursor:          "pointer",
           zIndex:          1,
           pointerEvents:   "none",
           opacity:         destroyed ? 0.1 : 1,
-          outline:         hovered ? `2px solid ${DEFENSE_FILL[d.defenseId] ?? "#ef4444"}` : "none",
+          outline:         hovered ? `2px solid ${fill}` : "none",
           outlineOffset:   "2px",
           transition:      "opacity 0.2s, outline 0.1s",
+          display:         "flex",
+          alignItems:      "center",
+          justifyContent:  "center",
+          overflow:        "hidden",
         }}
-      />
+      >
+        {/* Level number */}
+        <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 700, fontSize, lineHeight: 1, pointerEvents: "none", userSelect: "none" }}>
+          {d.level}
+        </span>
+        {/* Mode toggle button (X-Bow / Inferno) */}
+        {isModeCapable(d.defenseId) && (
+          <button
+            title={`Mode: ${d.mode} — clic pour basculer`}
+            style={{
+              position: "absolute", top: 1, right: 1,
+              width: Math.max(8, fontSize + 2), height: Math.max(8, fontSize + 2),
+              background: "rgba(0,0,0,0.55)", color: "#fff",
+              border: "none", borderRadius: 2, cursor: "pointer",
+              fontSize: Math.max(5, fontSize - 2), fontWeight: 700, lineHeight: 1,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              pointerEvents: "auto", zIndex: 10, padding: 0,
+            }}
+            onClick={(e) => { e.stopPropagation(); onModeToggle?.(d.instanceId); }}
+          >
+            {modeLabel(d)}
+          </button>
+        )}
+      </div>
     );
   });
 
@@ -652,6 +762,15 @@ function BattleGrid({
             </g>
           );
         })()}
+        {/* Inferno Tower beams */}
+        {infernoBeams?.map((b, i) => {
+          const sw    = b.stage === 2 ? 3 : b.stage === 1 ? 2 : 1;
+          const color = b.stage === 2 ? "#ffffff" : b.stage === 1 ? "#fbbf24" : "#f97316";
+          return (
+            <line key={i} x1={b.x1} y1={b.y1} x2={b.x2} y2={b.y2}
+              stroke={color} strokeWidth={sw} strokeOpacity={0.85} strokeLinecap="round" />
+          );
+        })}
         {/* Replay: projectiles in flight */}
         {activeProjectiles?.map((p, i) => (
           <circle key={i} cx={p.x} cy={p.y} r={2} fill={p.color} opacity={0.9} />

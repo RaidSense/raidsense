@@ -72,6 +72,11 @@ export interface DefensePlacement {
   defenseId: string;   // must match a Defense.id in defenses.ts
   level: number;
   position: Vec2;      // centre tile of the defense
+  /**
+   * Configurable mode for X-Bow ("ground" | "both") and
+   * Inferno Tower ("single" | "multi"). Empty string = default.
+   */
+  mode?: string;
 }
 
 /** Per-troop simulation output. */
@@ -109,16 +114,22 @@ export interface DefenseResult {
 /** One projectile fired during the simulation. Used to animate shots in replay. */
 export interface ShotEvent {
   /** Simulation time (s) when the shot was fired. */
-  time:      number;
+  time:         number;
   /** Defense type id (e.g. "cannon") — used for colour lookup in the frontend. */
-  defenseId: string;
+  defenseId:    string;
+  /** Defense instance id — used to match beams to placed buildings. */
+  defInstId:    string;
+  /** Troop instance id that was hit — used for accurate HP tracking. */
+  targetInstId: string;
+  /** Actual damage dealt (capped at target remaining HP). */
+  damage:       number;
   /** Defense centre in tile coords. Pixel = pos * cellPx. */
-  defPos:    Vec2;
+  defPos:       Vec2;
   /**
    * Troop centre at time of shot in tile coords (already +0.5 offset applied).
    * Pixel = pos * cellPx.
    */
-  troopPos:  Vec2;
+  troopPos:     Vec2;
 }
 
 /** Full simulation output. */
@@ -156,7 +167,7 @@ interface TroopState {
 
 interface DefenseState {
   instanceId:         string;
-  defenseId:          string;   // defense type (e.g. "cannon")
+  defenseId:          string;
   hp:                 number;
   dps:                number;
   minRange:           number;
@@ -167,10 +178,20 @@ interface DefenseState {
   alive:              boolean;
   destroyedAt:        number | null;
   totalDamageDealt:   number;
-  attackSpeed:        number;   // seconds between shots (-1 unused for Eagle Artillery)
-  attackCooldown:     number;   // seconds until next shot (counts down)
-  burstRemaining:     number;   // Eagle Artillery: shots left in current burst; -1 = N/A
-  interBurstCooldown: number;   // Eagle Artillery: wait timer between bursts
+  attackSpeed:        number;
+  attackCooldown:     number;
+  burstRemaining:     number;   // Eagle Artillery burst; -1 = N/A
+  interBurstCooldown: number;
+  // ── X-Bow / Inferno Tower mode ──────────────────────────────────────────
+  mode:               string;   // "" | "ground" | "both" | "single" | "multi"
+  // Inferno Tower single-target ramp-up
+  dpsSingleInit:      number;
+  dpsSingleMid:       number;
+  dpsSingleMax:       number;
+  singleLockTarget:   string | null; // currently locked troop instanceId
+  singleLockDuration: number;        // seconds locked on current target
+  // Inferno Tower multi-target
+  multiTargetCount:   number;        // 0 = N/A
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +278,15 @@ export function simulateAttack(
     if (!levelData)
       throw new Error(`Level ${pl.level} not found for defense "${pl.defenseId}"`);
 
-    const isEagle = pl.defenseId === "eagle-artillery";
+    const isEagle   = pl.defenseId === "eagle-artillery";
+    const isXbow    = pl.defenseId === "x-bow";
+    const isInferno = pl.defenseId === "inferno-tower";
+    const mode      = pl.mode ?? (isInferno ? "multi" : isXbow ? "ground" : "");
+
+    // X-Bow: adjust range and target type by mode
+    let maxRange   = levelData.maxRange;
+    let targetType = defData.targetType;
+    if (isXbow && mode === "both") { maxRange = 11.5; targetType = "Ground & Air"; }
 
     defenses.set(pl.instanceId, {
       instanceId:         pl.instanceId,
@@ -265,8 +294,8 @@ export function simulateAttack(
       hp:                 levelData.hp,
       dps:                levelData.dps,
       minRange:           levelData.minRange,
-      maxRange:           levelData.maxRange,
-      targetType:         defData.targetType,
+      maxRange,
+      targetType,
       position:           { ...pl.position },
       targetId:           null,
       alive:              true,
@@ -276,6 +305,13 @@ export function simulateAttack(
       attackCooldown:     0,
       burstRemaining:     isEagle ? EAGLE_BURST_SIZE : -1,
       interBurstCooldown: 0,
+      mode,
+      dpsSingleInit:      levelData.dpsSingleInit ?? 0,
+      dpsSingleMid:       levelData.dpsSingleMid  ?? 0,
+      dpsSingleMax:       levelData.dpsSingleMax  ?? 0,
+      singleLockTarget:   null,
+      singleLockDuration: 0,
+      multiTargetCount:   levelData.multiTargetCount ?? 0,
     });
   }
 
@@ -356,11 +392,27 @@ export function simulateAttack(
       target.destroyedAt = simTime;
     }
     shots.push({
-      time:      simTime,
-      defenseId: def.defenseId,
-      defPos:    { ...def.position },
-      troopPos:  { x: target.position.x + 0.5, y: target.position.y + 0.5 },
+      time:         simTime,
+      defenseId:    def.defenseId,
+      defInstId:    def.instanceId,
+      targetInstId: target.instanceId,
+      damage:       actual,
+      defPos:       { ...def.position },
+      troopPos:     { x: target.position.x + 0.5, y: target.position.y + 0.5 },
     });
+  }
+
+  /** Returns the N closest alive troops in range for multi-target defenses. */
+  function findNearestTroops(def: DefenseState, maxCount: number): TroopState[] {
+    const candidates: { dist: number; t: TroopState }[] = [];
+    for (const troop of troops.values()) {
+      if (!troop.alive) continue;
+      if (!defenseCanTarget(def.targetType, troop.isAirUnit)) continue;
+      const d = euclidean(def.position, troop.position);
+      if (d >= def.minRange && d <= def.maxRange) candidates.push({ dist: d, t: troop });
+    }
+    candidates.sort((a, b) => a.dist - b.dist);
+    return candidates.slice(0, maxCount).map((c) => c.t);
   }
 
   let lastSimTime = 0;
@@ -391,7 +443,6 @@ export function simulateAttack(
       // ── Eagle Artillery burst mechanics ───────────────────────────────────
       if (def.burstRemaining >= 0) {
         if (def.burstRemaining === 0) {
-          // Between bursts: count down inter-burst timer.
           def.interBurstCooldown -= TICK;
           if (def.interBurstCooldown <= 0) {
             def.burstRemaining = EAGLE_BURST_SIZE;
@@ -399,11 +450,9 @@ export function simulateAttack(
           }
           continue;
         }
-        // Mid-burst: wait for shot cooldown.
         def.attackCooldown -= TICK;
         if (def.attackCooldown > 0) continue;
 
-        // Damage per shot = total burst damage / burst size.
         const dpa = def.dps * EAGLE_BURST_INTERVAL / EAGLE_BURST_SIZE;
         fireShot(def, target, dpa, simTime);
         def.burstRemaining -= 1;
@@ -412,6 +461,41 @@ export function simulateAttack(
         } else {
           def.interBurstCooldown = EAGLE_INTER_BURST;
         }
+        continue;
+      }
+
+      // ── Inferno Tower single-target mode ──────────────────────────────────
+      if (def.defenseId === "inferno-tower" && def.mode === "single") {
+        def.attackCooldown -= TICK;
+        if (def.attackCooldown > 0) continue;
+
+        // Track lock-on duration; reset if target changed.
+        if (def.singleLockTarget !== def.targetId) {
+          def.singleLockTarget   = def.targetId;
+          def.singleLockDuration = 0;
+        } else {
+          def.singleLockDuration += def.attackSpeed;
+        }
+
+        const activeDps =
+          def.singleLockDuration >= 5.25 ? def.dpsSingleMax  :
+          def.singleLockDuration >= 1.5  ? def.dpsSingleMid  :
+                                           def.dpsSingleInit;
+        fireShot(def, target, activeDps * def.attackSpeed, simTime);
+        def.attackCooldown = def.attackSpeed;
+        continue;
+      }
+
+      // ── Inferno Tower multi-target mode ───────────────────────────────────
+      if (def.defenseId === "inferno-tower" && def.mode === "multi") {
+        def.attackCooldown -= TICK;
+        if (def.attackCooldown > 0) continue;
+
+        const targets = findNearestTroops(def, def.multiTargetCount || 5);
+        for (const t of targets) {
+          fireShot(def, t, def.dps * def.attackSpeed, simTime);
+        }
+        def.attackCooldown = def.attackSpeed;
         continue;
       }
 

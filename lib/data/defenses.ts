@@ -3,10 +3,17 @@ export type TargetType = "Ground" | "Air" | "Ground & Air";
 export interface DefenseLevel {
   level: number;
   hp: number;
+  /** Default DPS. For Inferno multi mode: per-target DPS. */
   dps: number;
   minRange: number;
   maxRange: number;
   townHallRequired: number;
+  // ── Inferno Tower single-target ramp-up tiers ────────────────────────────
+  dpsSingleInit?: number; // 0 – 1.5 s on same target
+  dpsSingleMid?:  number; // 1.5 s – 5.25 s
+  dpsSingleMax?:  number; // 5.25 s+
+  // ── Inferno Tower multi-target mode ─────────────────────────────────────
+  multiTargetCount?: number; // simultaneous targets (default 5 or 6)
 }
 
 export interface Defense {
@@ -154,20 +161,25 @@ export const DEFENSES: Defense[] = [
   {
     id: "x-bow",
     name: "X-Bow",
+    // Default: Ground-only (range 14). "both" mode uses range 11.5 and targets Ground & Air.
     targetType: "Ground",
     size: 3,
     attackSpeed: 0.128,
-    notes: "Player-configurable mode: Ground-only (range 14) or Ground & Air (range 11). targetType and maxRange in data reflect the default Ground-only mode. Must be reloaded with Elixir.",
+    notes: "Configurable mode: Ground-only (range 14) or Ground+Air (range 11.5). Damage per tick = DPS × 0.128. Must be reloaded with Elixir.",
     levels: [
-      { level: 1, hp: 1500, dps: 198, minRange: 0, maxRange: 14, townHallRequired: 9  },
-      { level: 2, hp: 1700, dps: 238, minRange: 0, maxRange: 14, townHallRequired: 9  },
-      { level: 3, hp: 1900, dps: 285, minRange: 0, maxRange: 14, townHallRequired: 10 },
-      { level: 4, hp: 2100, dps: 342, minRange: 0, maxRange: 14, townHallRequired: 11 },
-      { level: 5, hp: 2350, dps: 410, minRange: 0, maxRange: 14, townHallRequired: 12 },
-      { level: 6, hp: 2600, dps: 488, minRange: 0, maxRange: 14, townHallRequired: 13 },
-      { level: 7, hp: 2900, dps: 582, minRange: 0, maxRange: 14, townHallRequired: 14 },
-      { level: 8, hp: 3200, dps: 693, minRange: 0, maxRange: 14, townHallRequired: 15 },
-      { level: 9, hp: 3550, dps: 824, minRange: 0, maxRange: 14, townHallRequired: 16 },
+      { level: 1,  hp: 1500, dps: 60,  minRange: 0, maxRange: 14, townHallRequired: 9  },
+      { level: 2,  hp: 1900, dps: 70,  minRange: 0, maxRange: 14, townHallRequired: 9  },
+      { level: 3,  hp: 2300, dps: 80,  minRange: 0, maxRange: 14, townHallRequired: 10 },
+      { level: 4,  hp: 2700, dps: 85,  minRange: 0, maxRange: 14, townHallRequired: 11 },
+      { level: 5,  hp: 3100, dps: 95,  minRange: 0, maxRange: 14, townHallRequired: 12 },
+      { level: 6,  hp: 3400, dps: 110, minRange: 0, maxRange: 14, townHallRequired: 13 },
+      { level: 7,  hp: 3700, dps: 130, minRange: 0, maxRange: 14, townHallRequired: 14 },
+      { level: 8,  hp: 4000, dps: 155, minRange: 0, maxRange: 14, townHallRequired: 15 },
+      { level: 9,  hp: 4200, dps: 185, minRange: 0, maxRange: 14, townHallRequired: 16 },
+      { level: 10, hp: 4400, dps: 205, minRange: 0, maxRange: 14, townHallRequired: 16 },
+      { level: 11, hp: 4600, dps: 225, minRange: 0, maxRange: 14, townHallRequired: 16 },
+      { level: 12, hp: 4800, dps: 235, minRange: 0, maxRange: 14, townHallRequired: 16 },
+      { level: 13, hp: 5000, dps: 245, minRange: 0, maxRange: 14, townHallRequired: 16 },
     ],
   },
   {
@@ -176,16 +188,20 @@ export const DEFENSES: Defense[] = [
     targetType: "Ground & Air",
     size: 2,
     attackSpeed: 0.128,
-    notes: "Two modes — Single-target: DPS ramps from 30 to max over 1.5s of continuous fire, resets on target switch. Multi-target: fixed DPS hitting up to 5 simultaneous targets (6 targets at level 8+). DPS shown is Multi-target mode per unit.",
+    notes: "Single-target: DPS ramps at 3 tiers (0–1.5s / 1.5–5.25s / 5.25s+), resets on target change. Multi-target: constant DPS hitting 5 (lv1-7) or 6 (lv8+) targets simultaneously. Default mode: multi.",
     levels: [
-      { level: 1, hp: 1500, dps: 50,  minRange: 0, maxRange: 9, townHallRequired: 10 },
-      { level: 2, hp: 1700, dps: 70,  minRange: 0, maxRange: 9, townHallRequired: 10 },
-      { level: 3, hp: 1900, dps: 99,  minRange: 0, maxRange: 9, townHallRequired: 11 },
-      { level: 4, hp: 2100, dps: 140, minRange: 0, maxRange: 9, townHallRequired: 12 },
-      { level: 5, hp: 2400, dps: 200, minRange: 0, maxRange: 9, townHallRequired: 13 },
-      { level: 6, hp: 2700, dps: 283, minRange: 0, maxRange: 9, townHallRequired: 14 },
-      { level: 7, hp: 3000, dps: 400, minRange: 0, maxRange: 9, townHallRequired: 15 },
-      { level: 8, hp: 3400, dps: 565, minRange: 0, maxRange: 9, townHallRequired: 16 },
+      { level: 1,  hp: 1500, dps: 30,  dpsSingleInit: 30,  dpsSingleMid: 80,  dpsSingleMax: 800,  multiTargetCount: 5, minRange: 0, maxRange: 9, townHallRequired: 10 },
+      { level: 2,  hp: 1800, dps: 35,  dpsSingleInit: 35,  dpsSingleMid: 100, dpsSingleMax: 1000, multiTargetCount: 5, minRange: 0, maxRange: 9, townHallRequired: 10 },
+      { level: 3,  hp: 2100, dps: 40,  dpsSingleInit: 40,  dpsSingleMid: 120, dpsSingleMax: 1200, multiTargetCount: 5, minRange: 0, maxRange: 9, townHallRequired: 11 },
+      { level: 4,  hp: 2400, dps: 45,  dpsSingleInit: 45,  dpsSingleMid: 140, dpsSingleMax: 1400, multiTargetCount: 5, minRange: 0, maxRange: 9, townHallRequired: 12 },
+      { level: 5,  hp: 2700, dps: 50,  dpsSingleInit: 50,  dpsSingleMid: 150, dpsSingleMax: 1500, multiTargetCount: 5, minRange: 0, maxRange: 9, townHallRequired: 13 },
+      { level: 6,  hp: 3000, dps: 55,  dpsSingleInit: 55,  dpsSingleMid: 160, dpsSingleMax: 1600, multiTargetCount: 5, minRange: 0, maxRange: 9, townHallRequired: 14 },
+      { level: 7,  hp: 3300, dps: 65,  dpsSingleInit: 65,  dpsSingleMid: 180, dpsSingleMax: 1800, multiTargetCount: 5, minRange: 0, maxRange: 9, townHallRequired: 15 },
+      { level: 8,  hp: 3700, dps: 80,  dpsSingleInit: 80,  dpsSingleMid: 210, dpsSingleMax: 2100, multiTargetCount: 6, minRange: 0, maxRange: 9, townHallRequired: 16 },
+      { level: 9,  hp: 4000, dps: 100, dpsSingleInit: 100, dpsSingleMid: 230, dpsSingleMax: 2300, multiTargetCount: 6, minRange: 0, maxRange: 9, townHallRequired: 16 },
+      { level: 10, hp: 4400, dps: 120, dpsSingleInit: 120, dpsSingleMid: 260, dpsSingleMax: 2600, multiTargetCount: 6, minRange: 0, maxRange: 9, townHallRequired: 16 },
+      { level: 11, hp: 4800, dps: 140, dpsSingleInit: 140, dpsSingleMid: 290, dpsSingleMax: 2900, multiTargetCount: 6, minRange: 0, maxRange: 9, townHallRequired: 16 },
+      { level: 12, hp: 5100, dps: 155, dpsSingleInit: 155, dpsSingleMid: 330, dpsSingleMax: 3300, multiTargetCount: 6, minRange: 0, maxRange: 9, townHallRequired: 16 },
     ],
   },
   {
