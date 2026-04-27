@@ -59,11 +59,9 @@ export interface TroopDeployment {
   troopId: string;     // must match a Troop.id in troops.ts
   level: number;
   dropPosition: Vec2;
-  /**
-   * Whether this instance counts as an air unit (determines which defenses
-   * can fire at it). Inferred from troopId when omitted.
-   */
   isAirUnit?: boolean;
+  /** Simulation time (s) when this troop enters the battle. Default 0. */
+  deployAt?: number;
 }
 
 /** One defense building placed at a position on the grid. */
@@ -162,7 +160,6 @@ interface TroopState {
   troopId: string;
   hp: number;
   dps: number;
-  /** Tiles per second. */
   speed: number;
   attackRange: number;
   position: Vec2;
@@ -174,6 +171,8 @@ interface TroopState {
   hpHistory: number[];
   targetHistory: (string | null)[];
   positionHistory: Vec2[];
+  deployAt: number;   // seconds — troop activates when simTime reaches this
+  isActive: boolean;  // false until deployAt is reached
 }
 
 interface DefenseState {
@@ -274,9 +273,11 @@ export function simulateAttack(
       targetId: null,
       alive: true,
       destroyedAt: null,
-      hpHistory: [],    // populated after initial targeting below
+      hpHistory: [],
       targetHistory: [],
       positionHistory: [],
+      deployAt:  dep.deployAt ?? 0,
+      isActive:  (dep.deployAt ?? 0) <= 0,
     });
   }
 
@@ -363,7 +364,7 @@ export function simulateAttack(
     let bestDist = Infinity;
 
     for (const [id, troop] of troops) {
-      if (!troop.alive) continue;
+      if (!troop.alive || !troop.isActive) continue;
       if (!defenseCanTarget(def.targetType, troop.isAirUnit)) continue;
       const d = euclidean(def.position, troop.position);
       if (d >= def.minRange && d <= def.maxRange && d < bestDist) {
@@ -438,6 +439,20 @@ export function simulateAttack(
 
   for (let tick = 1; tick <= maxTicks; tick++) {
     const simTime = tick / TICKS_PER_SECOND;
+
+    // --- Activate troops whose deployAt time has been reached ----------------
+    for (const troop of troops.values()) {
+      if (!troop.isActive && simTime >= troop.deployAt) {
+        troop.isActive = true;
+        troop.targetId = pickTroopTarget(troop);
+        if (troop.targetId !== null) {
+          targetChanges.push({
+            time: simTime, troopInstId: troop.instanceId, troopId: troop.troopId,
+            oldTargetId: null, newTargetId: troop.targetId, reason: "initial",
+          });
+        }
+      }
+    }
 
     // --- Defense phase: each defense fires at a troop in range ---------------
 
@@ -528,7 +543,7 @@ export function simulateAttack(
     // --- Troop phase: each troop moves or attacks a defense ------------------
 
     for (const troop of troops.values()) {
-      if (!troop.alive) continue;
+      if (!troop.alive || !troop.isActive) continue;
 
       const prevTargetId = troop.targetId;
 

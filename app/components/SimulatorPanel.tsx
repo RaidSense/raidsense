@@ -13,11 +13,9 @@ import type {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const GRID_SIZE  = 44;
-const CELL       = 10; // fallback px/tile before ResizeObserver fires in BattleGrid
-const DROP_Y     = GRID_SIZE - 1;       // south border tile (43)
-const DROP_X_MIN = 4;
-const DROP_X_MAX = GRID_SIZE - 5;       // 39
+const GRID_SIZE    = 44;
+const CELL         = 10; // fallback px/tile before ResizeObserver fires in BattleGrid
+const DEPLOY_MARGIN = 5; // tiles from each edge that form the valid deployment zone
 const MAX_TROOP_SLOTS = 5;
 const MAX_DEFENSES    = 8;
 
@@ -63,6 +61,15 @@ interface TroopSlot {
   troopId: string;
   level: number;
   count: number;
+}
+
+interface PlacedTroop {
+  instanceId: string;
+  troopId:    string;
+  level:      number;
+  x:          number; // tile
+  y:          number;
+  deployAt:   number; // seconds delay before entering battle (0 = immediate)
 }
 
 interface PlacedDefense {
@@ -137,6 +144,52 @@ function buildDeployments(slots: TroopSlot[]): {
   return { deployments, meta };
 }
 
+/** Returns true if tile (x,y) is in the deployment perimeter and not covered by a defense. */
+function isValidDeployTile(x: number, y: number, defenses: PlacedDefense[]): boolean {
+  if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return false;
+  const inPerimeter = x < DEPLOY_MARGIN || x >= GRID_SIZE - DEPLOY_MARGIN
+                   || y < DEPLOY_MARGIN || y >= GRID_SIZE - DEPLOY_MARGIN;
+  if (!inPerimeter) return false;
+  return !defenses.some((d) => {
+    const s = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
+    return x >= d.x && x < d.x + s && y >= d.y && y < d.y + s;
+  });
+}
+
+function buildManualDeployments(
+  placedTroops: PlacedTroop[],
+  slots: TroopSlot[],
+): { deployments: TroopDeployment[]; meta: TroopMeta[] } {
+  const deployments: TroopDeployment[] = [];
+  const meta: TroopMeta[]              = [];
+  for (const pt of placedTroops) {
+    const troop = TROOPS.find((t) => t.id === pt.troopId);
+    if (!troop) continue;
+    const lData = troop.levels.find((l) => l.level === pt.level);
+    if (!lData) continue;
+    const slotIdx  = slots.findIndex((s) => s.troopId === pt.troopId);
+    const idx      = Math.max(0, slotIdx) % TROOP_COLORS.length;
+    const abbr     = TROOP_ABBREV[pt.troopId] ?? troop.name.slice(0, 2);
+    deployments.push({
+      instanceId:   pt.instanceId,
+      troopId:      pt.troopId,
+      level:        pt.level,
+      dropPosition: { x: pt.x, y: pt.y },
+      deployAt:     pt.deployAt,
+    });
+    meta.push({
+      instanceId: pt.instanceId,
+      slotId:     pt.troopId,
+      troopName:  troop.name,
+      maxHp:      lData.hp,
+      label:      abbr,
+      color:      TROOP_COLORS[idx],
+      colorHex:   TROOP_COLORS_HEX[idx],
+    });
+  }
+  return { deployments, meta };
+}
+
 function buildDefensePlacements(placed: PlacedDefense[]): DefensePlacement[] {
   return placed.map((d) => {
     const size = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
@@ -164,7 +217,12 @@ export default function SimulatorPanel() {
   const [palLevels, setPalLevels] = useState<Record<string, number>>(PALETTE_DEFAULTS);
   const [result, setResult]       = useState<SimulationResult | null>(null);
   const [meta, setMeta]           = useState<TroopMeta[]>([]);
-  const [cellSize, setCellSize]   = useState<number>(CELL); // updated by BattleGrid ResizeObserver
+  const [cellSize, setCellSize]   = useState<number>(CELL);
+
+  // ── Troop placement state ────────────────────────────────────────────────
+  const [placementMode,  setPlacementMode]  = useState<boolean>(false);
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [placedTroops,   setPlacedTroops]   = useState<PlacedTroop[]>([]);
 
   // ── Replay state ────────────────────────────────────────────────────────────
   const [showReplay,    setShowReplay]    = useState<boolean>(false);
@@ -324,6 +382,35 @@ export default function SimulatorPanel() {
     setShowReplay(false); setReplayPlaying(false); setReplayTime(0);
   }
 
+  function handlePlaceTroop(x: number, y: number) {
+    if (!selectedSlotId) return;
+    if (!isValidDeployTile(x, y, placed)) return;
+    // Check tile not already occupied by another placed troop
+    if (placedTroops.some((t) => t.x === x && t.y === y)) return;
+    const slot = troopSlots.find((s) => s.slotId === selectedSlotId);
+    if (!slot) return;
+    setPlacedTroops((prev) => [...prev, {
+      instanceId: `pt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      troopId:    slot.troopId,
+      level:      slot.level,
+      x, y,
+      deployAt: 0,
+    }]);
+    clearResult();
+  }
+
+  function handleRemovePlacedTroop(instanceId: string) {
+    setPlacedTroops((prev) => prev.filter((t) => t.instanceId !== instanceId));
+    clearResult();
+  }
+
+  function handleUpdateTroopTiming(instanceId: string, deployAt: number) {
+    setPlacedTroops((prev) => prev.map((t) =>
+      t.instanceId === instanceId ? { ...t, deployAt: Math.max(0, deployAt) } : t
+    ));
+    clearResult();
+  }
+
   // Troop handlers
   function updateTroopSlot(slotId: string, patch: Partial<Omit<TroopSlot, "slotId">>) {
     setTroopSlots((prev) => prev.map((s) => {
@@ -412,12 +499,19 @@ export default function SimulatorPanel() {
   }
 
   function handleSimulate() {
-    if (!placed.length || !totalTroops) return;
-    const { deployments, meta: m } = buildDeployments(troopSlots);
-    setMeta(m);
+    if (!placed.length) return;
     setShowReplay(false);
     setReplayPlaying(false);
     setReplayTime(0);
+    let deployments; let m;
+    if (placementMode) {
+      if (!placedTroops.length) return;
+      ({ deployments, meta: m } = buildManualDeployments(placedTroops, troopSlots));
+    } else {
+      if (!totalTroops) return;
+      ({ deployments, meta: m } = buildDeployments(troopSlots));
+    }
+    setMeta(m);
     const r = simulateAttack(deployments, buildDefensePlacements(placed));
     durationRef.current = r.durationSeconds;
     setResult(r);
@@ -456,6 +550,12 @@ export default function SimulatorPanel() {
             onRemove={handleRemove}
             onMove={handleMove}
             onModeToggle={handleModeToggle}
+            placementMode={placementMode}
+            placedTroops={placedTroops}
+            onPlaceTroop={handlePlaceTroop}
+            onRemovePlacedTroop={handleRemovePlacedTroop}
+            troopSlots={troopSlots}
+            selectedSlotId={selectedSlotId}
             replayDots={replayDots}
             replayDestroyedIds={replayDestroyedIds}
             activeProjectiles={activeProjectiles}
@@ -466,7 +566,10 @@ export default function SimulatorPanel() {
             replayTime={replayTime}
           />
           <p className="text-xs text-slate-600">
-            Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp; bande = zone de drop (bord sud) &nbsp;·&nbsp; {placed.length}/{MAX_DEFENSES} défenses
+            Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp;
+            {placementMode
+              ? `zone dorée = déploiement · ${placedTroops.length} troupe${placedTroops.length !== 1 ? "s" : ""} placée${placedTroops.length !== 1 ? "s" : ""}`
+              : `${placed.length}/${MAX_DEFENSES} défenses`}
           </p>
         </div>
 
@@ -488,14 +591,38 @@ export default function SimulatorPanel() {
 
           {/* Troop composer */}
           <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
-            <h2 className="text-base font-semibold text-slate-100">Troupes</h2>
-            <TroopComposer
-              slots={troopSlots}
-              totalCount={totalTroops}
-              onUpdate={updateTroopSlot}
-              onAdd={addTroopSlot}
-              onRemove={removeTroopSlot}
-            />
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-100">Troupes</h2>
+              <button
+                onClick={() => { setPlacementMode((p) => !p); setSelectedSlotId(null); clearResult(); }}
+                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  placementMode
+                    ? "bg-amber-500 text-slate-950"
+                    : "border border-slate-700 text-slate-400 hover:border-slate-500"
+                }`}
+              >
+                {placementMode ? "✓ Placement manuel" : "Placement manuel"}
+              </button>
+            </div>
+            {!placementMode && (
+              <TroopComposer
+                slots={troopSlots}
+                totalCount={totalTroops}
+                onUpdate={updateTroopSlot}
+                onAdd={addTroopSlot}
+                onRemove={removeTroopSlot}
+              />
+            )}
+            {placementMode && (
+              <TroopPlacementPanel
+                slots={troopSlots}
+                selectedSlotId={selectedSlotId}
+                onSelectSlot={setSelectedSlotId}
+                placedTroops={placedTroops}
+                onRemoveTroop={handleRemovePlacedTroop}
+                onUpdateTiming={handleUpdateTroopTiming}
+              />
+            )}
           </section>
 
         </div>
@@ -504,7 +631,7 @@ export default function SimulatorPanel() {
       {/* Simulate */}
       <button
         onClick={handleSimulate}
-        disabled={!placed.length || !totalTroops}
+        disabled={!placed.length || (placementMode ? placedTroops.length === 0 : !totalTroops)}
         className="w-full rounded-xl bg-amber-500 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 active:bg-amber-600 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-slate-950"
       >
         Simuler l&apos;attaque
@@ -576,6 +703,12 @@ function BattleGrid({
   onCellSizeChange,
   result: replayResult,
   replayTime,
+  placementMode,
+  placedTroops,
+  troopSlots: bgTroopSlots,
+  selectedSlotId,
+  onPlaceTroop,
+  onRemovePlacedTroop,
 }: {
   placed: PlacedDefense[];
   onPlace: (x: number, y: number, defenseId: string, level: number) => void;
@@ -588,6 +721,12 @@ function BattleGrid({
   onMove?: (instanceId: string, toX: number, toY: number) => void;
   onModeToggle?: (instanceId: string) => void;
   onCellSizeChange?: (size: number) => void;
+  placementMode?: boolean;
+  placedTroops?: PlacedTroop[];
+  troopSlots?: TroopSlot[];
+  selectedSlotId?: string | null;
+  onPlaceTroop?: (x: number, y: number) => void;
+  onRemovePlacedTroop?: (instanceId: string) => void;
   result?: import("../../lib/engine/calculator").SimulationResult | null;
   replayTime?: number;
 }) {
@@ -665,8 +804,15 @@ function BattleGrid({
   function onClick(e: React.MouseEvent) {
     const c = cellAt(e);
     if (!c) return;
-    const d = defenseAt(c.x, c.y);
-    if (d) { setHoveredDefenseId(null); onRemove(d.instanceId); }
+    if (placementMode) {
+      // Check if clicking on an existing placed troop
+      const existingTroop = placedTroops?.find((t) => t.x === c.x && t.y === c.y);
+      if (existingTroop) { onRemovePlacedTroop?.(existingTroop.instanceId); return; }
+      onPlaceTroop?.(c.x, c.y);
+    } else {
+      const d = defenseAt(c.x, c.y);
+      if (d) { setHoveredDefenseId(null); onRemove(d.instanceId); }
+    }
   }
 
   const isModeCapable = (defId: string) => defId === "x-bow" || defId === "inferno-tower";
@@ -780,18 +926,22 @@ function BattleGrid({
 
       {/* SVG: drop ring + drag highlight */}
       <svg className="absolute inset-0 pointer-events-none" width="100%" height="100%">
-        {/* Drop zone: south border band (tiles 41-43) */}
-        <rect
-          x={DROP_X_MIN * cellPx}
-          y={(GRID_SIZE - 3) * cellPx}
-          width={(DROP_X_MAX - DROP_X_MIN + 1) * cellPx}
-          height={3 * cellPx}
-          fill="rgba(251,191,36,0.05)"
-          stroke="#f59e0b"
-          strokeWidth={1.5}
-          strokeDasharray="5 3"
-          rx={3}
-        />
+        {/* Deployment zone — full perimeter ring (evenodd donut) */}
+        {(() => {
+          const M = DEPLOY_MARGIN * cellPx;
+          const G = GRID_SIZE * cellPx;
+          return (
+            <path
+              fillRule="evenodd"
+              fill={placementMode ? "rgba(251,191,36,0.1)" : "rgba(251,191,36,0.04)"}
+              stroke="#f59e0b"
+              strokeWidth={placementMode ? 1.5 : 0.75}
+              strokeOpacity={placementMode ? 0.7 : 0.3}
+              strokeDasharray="5 3"
+              d={`M 0 0 H ${G} V ${G} H 0 Z M ${M} ${M} H ${G-M} V ${G-M} H ${M} Z`}
+            />
+          );
+        })()}
         {/* Drag-over cell highlight */}
         {dragCell && (
           <rect
@@ -845,6 +995,28 @@ function BattleGrid({
             </g>
           );
         })()}
+        {/* Manually placed troops (pre-simulation, semi-transparent) */}
+        {placementMode && placedTroops?.map((pt) => {
+          const slotIdx = bgTroopSlots?.findIndex((s) => s.troopId === pt.troopId) ?? -1;
+          const hex     = TROOP_COLORS_HEX[Math.max(0, slotIdx) % TROOP_COLORS_HEX.length];
+          const abbr    = TROOP_ABBREV[pt.troopId] ?? "?";
+          const cx      = (pt.x + 0.5) * cellPx;
+          const cy      = (pt.y + 0.5) * cellPx;
+          return (
+            <g key={pt.instanceId} style={{ cursor: "pointer" }}>
+              <circle cx={cx} cy={cy} r={5} fill={hex} fillOpacity={0.5} stroke="rgba(255,255,255,0.5)" strokeWidth={1} />
+              <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle"
+                fontSize={4} fontFamily="monospace" fontWeight="bold"
+                fill="rgba(0,0,0,0.8)" style={{ pointerEvents: "none", userSelect: "none" }}
+              >{abbr}</text>
+              {pt.deployAt > 0 && (
+                <text x={cx} y={cy + 8} textAnchor="middle" dominantBaseline="middle"
+                  fontSize={3.5} fill="rgba(251,191,36,0.85)" style={{ pointerEvents: "none", userSelect: "none" }}
+                >{pt.deployAt}s</text>
+              )}
+            </g>
+          );
+        })}
         {/* Defense hitboxes — white outline on full size×size footprint */}
         {placed.map((d) => {
           const size = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
@@ -1003,6 +1175,87 @@ function ReplayControls({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── TroopPlacementPanel ────────────────────────────────────────────────────
+
+function TroopPlacementPanel({
+  slots, selectedSlotId, onSelectSlot, placedTroops, onRemoveTroop, onUpdateTiming,
+}: {
+  slots: TroopSlot[];
+  selectedSlotId: string | null;
+  onSelectSlot: (id: string | null) => void;
+  placedTroops: PlacedTroop[];
+  onRemoveTroop: (id: string) => void;
+  onUpdateTiming: (id: string, t: number) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      {/* Slot selector */}
+      <div className="space-y-1">
+        <p className="text-xs text-slate-500">Sélectionner le type à poser :</p>
+        <div className="flex flex-wrap gap-1.5">
+          {slots.map((slot, idx) => {
+            const troop = TROOPS.find((t) => t.id === slot.troopId)!;
+            const abbr  = TROOP_ABBREV[slot.troopId] ?? troop.name.slice(0, 2);
+            const color = TROOP_COLORS[idx % TROOP_COLORS.length];
+            const sel   = selectedSlotId === slot.slotId;
+            return (
+              <button
+                key={slot.slotId}
+                onClick={() => onSelectSlot(sel ? null : slot.slotId)}
+                className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  sel
+                    ? "border-amber-500 bg-amber-500/15 text-amber-300"
+                    : "border-slate-700 text-slate-400 hover:border-slate-500"
+                }`}
+              >
+                <span className={color}>{abbr}</span>
+                <span className="ml-1 text-slate-500">Lv{slot.level}</span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-slate-600">
+          {selectedSlotId ? "Cliquer sur la zone dorée pour poser une troupe" : "Aucune troupe sélectionnée"}
+        </p>
+      </div>
+
+      {/* Placed troops list */}
+      {placedTroops.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-slate-500">Troupes placées ({placedTroops.length}) :</p>
+          <div className="max-h-40 overflow-y-auto space-y-1">
+            {placedTroops.map((pt) => {
+              const troop = TROOPS.find((t) => t.id === pt.troopId)!;
+              const abbr  = TROOP_ABBREV[pt.troopId] ?? troop.name.slice(0, 2);
+              const slotIdx = slots.findIndex((s) => s.troopId === pt.troopId);
+              const color = TROOP_COLORS[Math.max(0, slotIdx) % TROOP_COLORS.length];
+              return (
+                <div key={pt.instanceId} className="flex items-center gap-2 rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs">
+                  <span className={`font-semibold ${color}`}>{abbr}</span>
+                  <span className="text-slate-500">Lv{pt.level}</span>
+                  <span className="text-slate-600">({pt.x},{pt.y})</span>
+                  <span className="text-slate-500 ml-auto flex-shrink-0">t=</span>
+                  <input
+                    type="number" min={0} step={0.5}
+                    value={pt.deployAt}
+                    onChange={(e) => onUpdateTiming(pt.instanceId, Number(e.target.value))}
+                    className="w-12 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                  <span className="text-slate-600">s</span>
+                  <button
+                    onClick={() => onRemoveTroop(pt.instanceId)}
+                    className="ml-1 text-slate-600 hover:text-rose-400 transition-colors"
+                  >×</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
