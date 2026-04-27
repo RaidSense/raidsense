@@ -161,9 +161,9 @@ export default function SimulatorPanel() {
   const [cellSize, setCellSize]   = useState<number>(CELL); // updated by BattleGrid ResizeObserver
 
   // ── Replay state ────────────────────────────────────────────────────────────
-  const [showReplay,    setShowReplay]    = useState(false);
-  const [replayPlaying, setReplayPlaying] = useState(false);
-  const [replayTime,    setReplayTime]    = useState(0);
+  const [showReplay,    setShowReplay]    = useState<boolean>(false);
+  const [replayPlaying, setReplayPlaying] = useState<boolean>(false);
+  const [replayTime,    setReplayTime]    = useState<number>(0);
   const [replaySpeed,   setReplaySpeed]   = useState<1 | 2>(1);
   const rafRef       = useRef<number>(0);
   const lastTsRef    = useRef<number>(0);
