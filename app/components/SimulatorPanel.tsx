@@ -3,7 +3,7 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { TROOPS } from "../../lib/data/troops";
 import { DEFENSES } from "../../lib/data/defenses";
-import { simulateAttack } from "../../lib/engine/calculator";
+import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
 import type {
   SimulationResult,
   TroopDeployment,
@@ -136,12 +136,15 @@ function buildDeployments(slots: TroopSlot[]): {
 }
 
 function buildDefensePlacements(placed: PlacedDefense[]): DefensePlacement[] {
-  return placed.map((d) => ({
-    instanceId: d.instanceId,
-    defenseId:  d.defenseId,
-    level:      d.level,
-    position:   { x: d.x, y: d.y },
-  }));
+  return placed.map((d) => {
+    const size = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
+    return {
+      instanceId: d.instanceId,
+      defenseId:  d.defenseId,
+      level:      d.level,
+      position:   { x: d.x + size / 2, y: d.y + size / 2 }, // centre du bâtiment
+    };
+  });
 }
 
 // ── SimulatorPanel ─────────────────────────────────────────────────────────
@@ -217,6 +220,29 @@ export default function SimulatorPanel() {
     }
     return ids;
   }, [showReplay, result, replayTime]);
+
+  // Projectiles currently in flight at replayTime
+  const activeProjectiles = useMemo(() => {
+    if (!showReplay || !result?.shots?.length) return undefined;
+    const out: { x: number; y: number; color: string }[] = [];
+    for (const shot of result.shots) {
+      if (shot.time > replayTime) break; // shots are chronological
+      const elapsed = replayTime - shot.time;
+      const dx  = shot.troopPos.x - shot.defPos.x;
+      const dy  = shot.troopPos.y - shot.defPos.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist === 0) continue;
+      const travelTime = dist / PROJECTILE_SPEED;
+      if (elapsed >= travelTime) continue;
+      const t = elapsed / travelTime;
+      out.push({
+        x:     (shot.defPos.x  + dx * t) * cellSize,
+        y:     (shot.defPos.y  + dy * t) * cellSize,
+        color: DEFENSE_FILL[shot.defenseId] ?? "#ffffff",
+      });
+    }
+    return out;
+  }, [showReplay, result, replayTime, cellSize]);
 
   const totalTroops = troopSlots.reduce((s, sl) => s + sl.count, 0);
 
@@ -319,6 +345,7 @@ export default function SimulatorPanel() {
             onRemove={handleRemove}
             replayDots={replayDots}
             replayDestroyedIds={replayDestroyedIds}
+            activeProjectiles={activeProjectiles}
             onCellSizeChange={setCellSize}
           />
           <p className="text-xs text-slate-600">
@@ -424,6 +451,7 @@ function BattleGrid({
   onRemove,
   replayDots,
   replayDestroyedIds,
+  activeProjectiles,
   onCellSizeChange,
 }: {
   placed: PlacedDefense[];
@@ -431,6 +459,7 @@ function BattleGrid({
   onRemove: (instanceId: string) => void;
   replayDots?: ReplayDot[];
   replayDestroyedIds?: Set<string>;
+  activeProjectiles?: { x: number; y: number; color: string }[];
   onCellSizeChange?: (size: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -623,6 +652,10 @@ function BattleGrid({
             </g>
           );
         })()}
+        {/* Replay: projectiles in flight */}
+        {activeProjectiles?.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r={2} fill={p.color} opacity={0.9} />
+        ))}
         {/* Replay: animated troop dots + HP bars */}
         {replayDots?.map((dot) => {
           const BAR_W   = 14;

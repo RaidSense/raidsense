@@ -9,8 +9,17 @@ const TICKS_PER_SECOND = 10;
 const TICK = 1 / TICKS_PER_SECOND; // 0.1 s
 const MAX_SIM_SECONDS = 180;        // hard cap: 3-minute raid
 
-// In CoC the internal speed unit roughly equals (movementSpeed / 16) tiles/sec.
 const SPEED_DIVISOR = 16;
+
+// Eagle Artillery burst constants
+const EAGLE_BURST_SIZE     = 3;
+const EAGLE_SHOT_INTERVAL  = 0.75;  // s between shots within a burst
+const EAGLE_BURST_INTERVAL = 10;    // s from one burst start to the next
+// Wait between burst end and next burst start:
+const EAGLE_INTER_BURST    = EAGLE_BURST_INTERVAL - (EAGLE_BURST_SIZE - 1) * EAGLE_SHOT_INTERVAL;
+
+// Tiles per second a projectile travels (used by the frontend for animation).
+export const PROJECTILE_SPEED = 25;
 
 // Ground troops that are actually air units — affects which defenses can target them.
 const AIR_UNIT_IDS = new Set<string>([
@@ -97,12 +106,29 @@ export interface DefenseResult {
   totalDamageDealt: number;
 }
 
+/** One projectile fired during the simulation. Used to animate shots in replay. */
+export interface ShotEvent {
+  /** Simulation time (s) when the shot was fired. */
+  time:      number;
+  /** Defense type id (e.g. "cannon") — used for colour lookup in the frontend. */
+  defenseId: string;
+  /** Defense centre in tile coords. Pixel = pos * cellPx. */
+  defPos:    Vec2;
+  /**
+   * Troop centre at time of shot in tile coords (already +0.5 offset applied).
+   * Pixel = pos * cellPx.
+   */
+  troopPos:  Vec2;
+}
+
 /** Full simulation output. */
 export interface SimulationResult {
   troops: Record<string, TroopResult>;
   defenses: Record<string, DefenseResult>;
   /** How many seconds the simulation actually ran before termination. */
   durationSeconds: number;
+  /** Every discrete shot fired by a defense during the simulation. */
+  shots: ShotEvent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -129,17 +155,22 @@ interface TroopState {
 }
 
 interface DefenseState {
-  instanceId: string;
-  hp: number;
-  dps: number;
-  minRange: number;
-  maxRange: number;
-  targetType: TargetType;
-  position: Vec2;
-  targetId: string | null;
-  alive: boolean;
-  destroyedAt: number | null;
-  totalDamageDealt: number;
+  instanceId:         string;
+  defenseId:          string;   // defense type (e.g. "cannon")
+  hp:                 number;
+  dps:                number;
+  minRange:           number;
+  maxRange:           number;
+  targetType:         TargetType;
+  position:           Vec2;
+  targetId:           string | null;
+  alive:              boolean;
+  destroyedAt:        number | null;
+  totalDamageDealt:   number;
+  attackSpeed:        number;   // seconds between shots (-1 unused for Eagle Artillery)
+  attackCooldown:     number;   // seconds until next shot (counts down)
+  burstRemaining:     number;   // Eagle Artillery: shots left in current burst; -1 = N/A
+  interBurstCooldown: number;   // Eagle Artillery: wait timer between bursts
 }
 
 // ---------------------------------------------------------------------------
@@ -226,18 +257,25 @@ export function simulateAttack(
     if (!levelData)
       throw new Error(`Level ${pl.level} not found for defense "${pl.defenseId}"`);
 
+    const isEagle = pl.defenseId === "eagle-artillery";
+
     defenses.set(pl.instanceId, {
-      instanceId: pl.instanceId,
-      hp: levelData.hp,
-      dps: levelData.dps,
-      minRange: levelData.minRange,
-      maxRange: levelData.maxRange,
-      targetType: defData.targetType,
-      position: { ...pl.position },
-      targetId: null,
-      alive: true,
-      destroyedAt: null,
-      totalDamageDealt: 0,
+      instanceId:         pl.instanceId,
+      defenseId:          pl.defenseId,
+      hp:                 levelData.hp,
+      dps:                levelData.dps,
+      minRange:           levelData.minRange,
+      maxRange:           levelData.maxRange,
+      targetType:         defData.targetType,
+      position:           { ...pl.position },
+      targetId:           null,
+      alive:              true,
+      destroyedAt:        null,
+      totalDamageDealt:   0,
+      attackSpeed:        defData.attackSpeed,
+      attackCooldown:     0,
+      burstRemaining:     isEagle ? EAGLE_BURST_SIZE : -1,
+      interBurstCooldown: 0,
     });
   }
 
@@ -301,6 +339,30 @@ export function simulateAttack(
   // 4. Simulation loop
   // -------------------------------------------------------------------------
 
+  const shots: ShotEvent[] = [];
+
+  function fireShot(
+    def:     DefenseState,
+    target:  TroopState,
+    damage:  number,
+    simTime: number,
+  ): void {
+    const actual = Math.min(damage, target.hp);
+    target.hp            -= actual;
+    def.totalDamageDealt += actual;
+    if (target.hp <= 0 && target.alive) {
+      target.hp          = 0;
+      target.alive       = false;
+      target.destroyedAt = simTime;
+    }
+    shots.push({
+      time:      simTime,
+      defenseId: def.defenseId,
+      defPos:    { ...def.position },
+      troopPos:  { x: target.position.x + 0.5, y: target.position.y + 0.5 },
+    });
+  }
+
   let lastSimTime = 0;
   const maxTicks = MAX_SIM_SECONDS * TICKS_PER_SECOND;
 
@@ -312,12 +374,11 @@ export function simulateAttack(
     for (const def of defenses.values()) {
       if (!def.alive) continue;
 
-      // Reacquire if current target is dead or invalid.
+      // Reacquire if current target is dead or out of range.
       const currentTarget = def.targetId ? troops.get(def.targetId) : undefined;
       if (!currentTarget?.alive) {
         def.targetId = pickDefenseTarget(def);
       } else {
-        // Confirm target is still in range (troops move, but rarely leave range).
         const d = euclidean(def.position, currentTarget.position);
         if (d < def.minRange || d > def.maxRange) {
           def.targetId = pickDefenseTarget(def);
@@ -325,18 +386,41 @@ export function simulateAttack(
       }
 
       if (def.targetId === null) continue;
-
       const target = troops.get(def.targetId)!;
-      const damage = def.dps * TICK;
-      const actualDamage = Math.min(damage, target.hp);
-      target.hp -= actualDamage;
-      def.totalDamageDealt += actualDamage;
 
-      if (target.hp <= 0 && target.alive) {
-        target.hp = 0;
-        target.alive = false;
-        target.destroyedAt = simTime;
+      // ── Eagle Artillery burst mechanics ───────────────────────────────────
+      if (def.burstRemaining >= 0) {
+        if (def.burstRemaining === 0) {
+          // Between bursts: count down inter-burst timer.
+          def.interBurstCooldown -= TICK;
+          if (def.interBurstCooldown <= 0) {
+            def.burstRemaining = EAGLE_BURST_SIZE;
+            def.attackCooldown = 0;
+          }
+          continue;
+        }
+        // Mid-burst: wait for shot cooldown.
+        def.attackCooldown -= TICK;
+        if (def.attackCooldown > 0) continue;
+
+        // Damage per shot = total burst damage / burst size.
+        const dpa = def.dps * EAGLE_BURST_INTERVAL / EAGLE_BURST_SIZE;
+        fireShot(def, target, dpa, simTime);
+        def.burstRemaining -= 1;
+        if (def.burstRemaining > 0) {
+          def.attackCooldown = EAGLE_SHOT_INTERVAL;
+        } else {
+          def.interBurstCooldown = EAGLE_INTER_BURST;
+        }
+        continue;
       }
+
+      // ── Standard timed attack ─────────────────────────────────────────────
+      def.attackCooldown -= TICK;
+      if (def.attackCooldown > 0) continue;
+
+      fireShot(def, target, def.dps * def.attackSpeed, simTime);
+      def.attackCooldown = def.attackSpeed;
     }
 
     // --- Troop phase: each troop moves or attacks a defense ------------------
@@ -423,5 +507,6 @@ export function simulateAttack(
     troops: troopResults,
     defenses: defenseResults,
     durationSeconds: Math.round(lastSimTime * 10) / 10,
+    shots,
   };
 }
