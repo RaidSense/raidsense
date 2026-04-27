@@ -13,11 +13,12 @@ import type {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const GRID_SIZE       = 44;
-const CELL            = 14;   // px per tile → 44 × 14 = 616 px
-const DROP_Y          = GRID_SIZE - 1; // south border tile (43)
-const DROP_X_MIN      = 4;
-const DROP_X_MAX      = GRID_SIZE - 5; // 39
+const GRID_SIZE  = 44;
+const GRID_PX    = 616;                 // total grid side in pixels (single source of truth)
+const CELL       = GRID_PX / GRID_SIZE; // 14 px per tile — drives ALL size/range calculations
+const DROP_Y     = GRID_SIZE - 1;       // south border tile (43)
+const DROP_X_MIN = 4;
+const DROP_X_MAX = GRID_SIZE - 5;       // 39
 const MAX_TROOP_SLOTS = 5;
 const MAX_DEFENSES    = 8;
 
@@ -392,7 +393,7 @@ export default function SimulatorPanel() {
 // Défenses = divs absolus (max 8). SVG overlay = anneau + highlight.
 // Event delegation sur le container pour drag & click.
 
-const W = GRID_SIZE * CELL; // 616 px
+const W = GRID_PX; // 616 px — equals GRID_SIZE * CELL by construction
 
 interface ReplayDot {
   id: string;
