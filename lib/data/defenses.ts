@@ -13,7 +13,11 @@ export interface Defense {
   id: string;
   name: string;
   targetType: TargetType;
-  /** Describes non-obvious mechanics (e.g. ramp-up DPS, burst fire, bounce) */
+  /** Side length of the building footprint in tiles (always square). */
+  size: number;
+  /** Seconds between attacks. */
+  attackSpeed: number;
+  /** Non-obvious mechanics: modes, splash radius, activation conditions, etc. */
   notes?: string;
   levels: DefenseLevel[];
 }
@@ -23,6 +27,8 @@ export const DEFENSES: Defense[] = [
     id: "cannon",
     name: "Cannon",
     targetType: "Ground",
+    size: 3,
+    attackSpeed: 0.8,
     levels: [
       { level: 1,  hp: 420,   dps: 9,   minRange: 0, maxRange: 9, townHallRequired: 1  },
       { level: 2,  hp: 470,   dps: 12,  minRange: 0, maxRange: 9, townHallRequired: 1  },
@@ -50,6 +56,9 @@ export const DEFENSES: Defense[] = [
     id: "archer-tower",
     name: "Archer Tower",
     targetType: "Ground & Air",
+    size: 3,
+    attackSpeed: 0.5,
+    notes: "Two configurable range modes: Long-range (range 10, targets ground & air) and Short-range (range 7, faster fire rate). Data uses Long-range mode (range 10).",
     levels: [
       { level: 1,  hp: 380,  dps: 11,  minRange: 0, maxRange: 10, townHallRequired: 1  },
       { level: 2,  hp: 420,  dps: 15,  minRange: 0, maxRange: 10, townHallRequired: 2  },
@@ -77,7 +86,9 @@ export const DEFENSES: Defense[] = [
     id: "mortar",
     name: "Mortar",
     targetType: "Ground",
-    notes: "Area-splash weapon. Cannot hit targets closer than 4 tiles. DPS appears low because it deals heavy splash damage per shot.",
+    size: 3,
+    attackSpeed: 5,
+    notes: "Splash weapon (radius 1.5 tiles). Min range 4 — cannot target nearby units. DPS is low because damage is delivered as heavy area-splash per slow shot.",
     levels: [
       { level: 1,  hp: 400,  dps: 4,  minRange: 4, maxRange: 11, townHallRequired: 3  },
       { level: 2,  hp: 450,  dps: 5,  minRange: 4, maxRange: 11, townHallRequired: 4  },
@@ -99,6 +110,8 @@ export const DEFENSES: Defense[] = [
     id: "air-defense",
     name: "Air Defense",
     targetType: "Air",
+    size: 3,
+    attackSpeed: 1,
     levels: [
       { level: 1,  hp: 800,  dps: 80,   minRange: 0, maxRange: 10, townHallRequired: 4  },
       { level: 2,  hp: 850,  dps: 110,  minRange: 0, maxRange: 10, townHallRequired: 5  },
@@ -119,7 +132,9 @@ export const DEFENSES: Defense[] = [
     id: "wizard-tower",
     name: "Wizard Tower",
     targetType: "Ground & Air",
-    notes: "Area-splash weapon. Hits all units within splash radius around the target.",
+    size: 3,
+    attackSpeed: 1,
+    notes: "Splash weapon (radius 1.5 tiles). Hits all units within splash radius around the targeted unit.",
     levels: [
       { level: 1,  hp: 620,  dps: 11,  minRange: 0, maxRange: 7, townHallRequired: 5  },
       { level: 2,  hp: 700,  dps: 16,  minRange: 0, maxRange: 7, townHallRequired: 5  },
@@ -139,25 +154,29 @@ export const DEFENSES: Defense[] = [
   {
     id: "x-bow",
     name: "X-Bow",
-    targetType: "Ground & Air",
-    notes: "Player-configurable target mode: Ground-only (range 14) or Ground & Air (range 11). DPS values shown for Ground & Air mode. Must be reloaded with Elixir.",
+    targetType: "Ground",
+    size: 3,
+    attackSpeed: 0.128,
+    notes: "Player-configurable mode: Ground-only (range 14) or Ground & Air (range 11). targetType and maxRange in data reflect the default Ground-only mode. Must be reloaded with Elixir.",
     levels: [
-      { level: 1, hp: 1500, dps: 198, minRange: 0, maxRange: 11, townHallRequired: 9  },
-      { level: 2, hp: 1700, dps: 238, minRange: 0, maxRange: 11, townHallRequired: 9  },
-      { level: 3, hp: 1900, dps: 285, minRange: 0, maxRange: 11, townHallRequired: 10 },
-      { level: 4, hp: 2100, dps: 342, minRange: 0, maxRange: 11, townHallRequired: 11 },
-      { level: 5, hp: 2350, dps: 410, minRange: 0, maxRange: 11, townHallRequired: 12 },
-      { level: 6, hp: 2600, dps: 488, minRange: 0, maxRange: 11, townHallRequired: 13 },
-      { level: 7, hp: 2900, dps: 582, minRange: 0, maxRange: 11, townHallRequired: 14 },
-      { level: 8, hp: 3200, dps: 693, minRange: 0, maxRange: 11, townHallRequired: 15 },
-      { level: 9, hp: 3550, dps: 824, minRange: 0, maxRange: 11, townHallRequired: 16 },
+      { level: 1, hp: 1500, dps: 198, minRange: 0, maxRange: 14, townHallRequired: 9  },
+      { level: 2, hp: 1700, dps: 238, minRange: 0, maxRange: 14, townHallRequired: 9  },
+      { level: 3, hp: 1900, dps: 285, minRange: 0, maxRange: 14, townHallRequired: 10 },
+      { level: 4, hp: 2100, dps: 342, minRange: 0, maxRange: 14, townHallRequired: 11 },
+      { level: 5, hp: 2350, dps: 410, minRange: 0, maxRange: 14, townHallRequired: 12 },
+      { level: 6, hp: 2600, dps: 488, minRange: 0, maxRange: 14, townHallRequired: 13 },
+      { level: 7, hp: 2900, dps: 582, minRange: 0, maxRange: 14, townHallRequired: 14 },
+      { level: 8, hp: 3200, dps: 693, minRange: 0, maxRange: 14, townHallRequired: 15 },
+      { level: 9, hp: 3550, dps: 824, minRange: 0, maxRange: 14, townHallRequired: 16 },
     ],
   },
   {
     id: "inferno-tower",
     name: "Inferno Tower",
     targetType: "Ground & Air",
-    notes: "Two modes: Single-target (DPS ramps from ~30 to max over ~6s of continuous fire, resets on target switch) and Multi-target (fixed DPS, hits up to 5 units). DPS shown is Multi-target mode per unit.",
+    size: 2,
+    attackSpeed: 0.128,
+    notes: "Two modes — Single-target: DPS ramps from 30 to max over 1.5s of continuous fire, resets on target switch. Multi-target: fixed DPS hitting up to 5 simultaneous targets (6 targets at level 8+). DPS shown is Multi-target mode per unit.",
     levels: [
       { level: 1, hp: 1500, dps: 50,  minRange: 0, maxRange: 9, townHallRequired: 10 },
       { level: 2, hp: 1700, dps: 70,  minRange: 0, maxRange: 9, townHallRequired: 10 },
@@ -172,8 +191,10 @@ export const DEFENSES: Defense[] = [
   {
     id: "eagle-artillery",
     name: "Eagle Artillery",
-    targetType: "Ground & Air",
-    notes: "Fires a burst of 3 shells with area splash. Activates only after a certain number of troops have been deployed. Minimum range of 7 tiles — cannot hit nearby units.",
+    targetType: "Ground",
+    size: 4,
+    attackSpeed: 1,
+    notes: "Fires a burst of 3 shells with area splash. Inactive until 150 housing spaces of troops have been deployed. Min range 7 — cannot hit nearby units.",
     levels: [
       { level: 1, hp: 4000,  dps: 112, minRange: 7, maxRange: 50, townHallRequired: 11 },
       { level: 2, hp: 5000,  dps: 135, minRange: 7, maxRange: 50, townHallRequired: 11 },
@@ -188,13 +209,15 @@ export const DEFENSES: Defense[] = [
     id: "scattershot",
     name: "Scattershot",
     targetType: "Ground & Air",
-    notes: "Fires boulders that bounce and deal area splash on each bounce. Effective against large groups of ground and air troops.",
+    size: 3,
+    attackSpeed: 0.75,
+    notes: "Fires 3 boulders per burst. Each impact: primary splash radius 0.75 tiles; shockwave splash in a 0.75–3 tile ring around each impact. Min range 7.",
     levels: [
-      { level: 1, hp: 3000, dps: 90,  minRange: 0, maxRange: 16, townHallRequired: 13 },
-      { level: 2, hp: 3600, dps: 108, minRange: 0, maxRange: 16, townHallRequired: 13 },
-      { level: 3, hp: 4320, dps: 130, minRange: 0, maxRange: 16, townHallRequired: 14 },
-      { level: 4, hp: 5180, dps: 156, minRange: 0, maxRange: 16, townHallRequired: 15 },
-      { level: 5, hp: 6220, dps: 187, minRange: 0, maxRange: 16, townHallRequired: 16 },
+      { level: 1, hp: 3000, dps: 90,  minRange: 7, maxRange: 50, townHallRequired: 13 },
+      { level: 2, hp: 3600, dps: 108, minRange: 7, maxRange: 50, townHallRequired: 13 },
+      { level: 3, hp: 4320, dps: 130, minRange: 7, maxRange: 50, townHallRequired: 14 },
+      { level: 4, hp: 5180, dps: 156, minRange: 7, maxRange: 50, townHallRequired: 15 },
+      { level: 5, hp: 6220, dps: 187, minRange: 7, maxRange: 50, townHallRequired: 16 },
     ],
   },
 ];
