@@ -14,7 +14,7 @@ import type {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const GRID_SIZE  = 44;
-const GRID_PX    = 616;                 // total grid side in pixels (single source of truth)
+const GRID_PX    = 440;                 // total grid side in pixels (single source of truth)
 const CELL       = GRID_PX / GRID_SIZE; // 14 px per tile — drives ALL size/range calculations
 const DROP_Y     = GRID_SIZE - 1;       // south border tile (43)
 const DROP_X_MIN = 4;
