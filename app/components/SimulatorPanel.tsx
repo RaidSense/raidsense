@@ -199,7 +199,12 @@ export default function SimulatorPanel() {
       if (!tr) return [];
       const pos = interpolatePosition(tr.positionPerSecond, replayTime, tr.destroyedAt);
       if (!pos) return [];
-      return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label }];
+      const s    = Math.floor(replayTime);
+      const frac = replayTime - s;
+      const hp0  = tr.hpPerSecond[Math.min(s,     tr.hpPerSecond.length - 1)] ?? 0;
+      const hp1  = tr.hpPerSecond[Math.min(s + 1, tr.hpPerSecond.length - 1)] ?? hp0;
+      const hpPct = m.maxHp > 0 ? Math.max(0, Math.min(1, (hp0 + (hp1 - hp0) * frac) / m.maxHp)) : 0;
+      return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label, hpPct }];
     });
   }, [showReplay, result, meta, replayTime, cellSize]);
 
@@ -249,9 +254,17 @@ export default function SimulatorPanel() {
   // Defense handlers
   function handlePlace(x: number, y: number, defenseId: string, level: number) {
     setPlaced((prev) => {
-      const filtered = prev.filter((d) => !(d.x === x && d.y === y));
-      if (filtered.length >= MAX_DEFENSES) return prev;
-      return [...filtered, { instanceId: `d-${Date.now()}`, defenseId, level, x, y }];
+      const newSize = DEFENSES.find((d) => d.id === defenseId)?.size ?? 1;
+      // Hors grille
+      if (x + newSize > GRID_SIZE || y + newSize > GRID_SIZE) return prev;
+      // Chevauchement avec un bâtiment existant
+      const overlaps = prev.some((d) => {
+        const s = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
+        return !(d.x + s <= x || x + newSize <= d.x || d.y + s <= y || y + newSize <= d.y);
+      });
+      if (overlaps) return prev;
+      if (prev.length >= MAX_DEFENSES) return prev;
+      return [...prev, { instanceId: `d-${Date.now()}`, defenseId, level, x, y }];
     });
     clearResult();
   }
@@ -402,6 +415,7 @@ interface ReplayDot {
   cy: number;
   fill: string;
   label: string;
+  hpPct: number; // 0–1, current HP / max HP
 }
 
 function BattleGrid({
@@ -609,21 +623,31 @@ function BattleGrid({
             </g>
           );
         })()}
-        {/* Replay: animated troop dots */}
-        {replayDots?.map((dot) => (
-          <g key={dot.id}>
-            <circle cx={dot.cx} cy={dot.cy} r={5} fill={dot.fill} stroke="rgba(0,0,0,0.6)" strokeWidth={1} />
-            <text
-              x={dot.cx} y={dot.cy + 1}
-              textAnchor="middle" dominantBaseline="middle"
-              fontSize={5} fontFamily="monospace" fontWeight="bold"
-              fill="rgba(0,0,0,0.7)"
-              style={{ pointerEvents: "none", userSelect: "none" }}
-            >
-              {dot.label}
-            </text>
-          </g>
-        ))}
+        {/* Replay: animated troop dots + HP bars */}
+        {replayDots?.map((dot) => {
+          const BAR_W   = 14;
+          const BAR_H   = 2;
+          const barX    = dot.cx - BAR_W / 2;
+          const barY    = dot.cy + 7;
+          const hpColor = dot.hpPct > 0.6 ? "#22c55e" : dot.hpPct > 0.3 ? "#f59e0b" : "#ef4444";
+          return (
+            <g key={dot.id}>
+              <circle cx={dot.cx} cy={dot.cy} r={5} fill={dot.fill} stroke="rgba(0,0,0,0.6)" strokeWidth={1} />
+              <text
+                x={dot.cx} y={dot.cy + 1}
+                textAnchor="middle" dominantBaseline="middle"
+                fontSize={5} fontFamily="monospace" fontWeight="bold"
+                fill="rgba(0,0,0,0.7)"
+                style={{ pointerEvents: "none", userSelect: "none" }}
+              >
+                {dot.label}
+              </text>
+              {/* HP bar */}
+              <rect x={barX} y={barY} width={BAR_W} height={BAR_H} rx={1} fill="rgba(0,0,0,0.45)" />
+              <rect x={barX} y={barY} width={BAR_W * dot.hpPct} height={BAR_H} rx={1} fill={hpColor} />
+            </g>
+          );
+        })}
       </svg>
     </div>
   );
