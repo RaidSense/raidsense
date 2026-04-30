@@ -208,6 +208,7 @@ interface DefenseState {
   defenseId:          string;
   hp:                 number;
   dps:                number;
+  size:               number;   // footprint side length in tiles
   minRange:           number;
   maxRange:           number;
   targetType:         TargetType;
@@ -238,6 +239,7 @@ interface BuildingState {
   instanceId:  string;
   buildingId:  string;
   hp:          number;
+  size:        number;   // footprint side length in tiles
   targetTags:  readonly string[];
   position:    Vec2;
   alive:       boolean;
@@ -258,6 +260,18 @@ function stepToward(pos: Vec2, goal: Vec2, maxStep: number): Vec2 {
   if (d <= maxStep) return { x: goal.x, y: goal.y };
   const ratio = maxStep / d;
   return { x: pos.x + (goal.x - pos.x) * ratio, y: pos.y + (goal.y - pos.y) * ratio };
+}
+
+/**
+ * Distance from point `p` to the nearest edge of a square footprint.
+ * The footprint is centered on `center` with side length `size`.
+ * Returns 0 when the point is inside or touching the footprint.
+ */
+function distanceToFootprint(p: Vec2, center: Vec2, size: number): number {
+  const half = size / 2;
+  const dx = Math.max(0, Math.abs(p.x - center.x) - half);
+  const dy = Math.max(0, Math.abs(p.y - center.y) - half);
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 function defenseCanTarget(targetType: TargetType, isAirUnit: boolean): boolean {
@@ -366,6 +380,7 @@ export function simulateAttack(
       defenseId:          pl.defenseId,
       hp:                 levelData.hp,
       dps:                levelData.dps,
+      size:               defData.size,
       minRange:           levelData.minRange,
       maxRange,
       targetType,
@@ -404,6 +419,7 @@ export function simulateAttack(
       instanceId:  pl.instanceId,
       buildingId:  pl.buildingId,
       hp:          levelData.hp,
+      size:        bldData.size,
       targetTags:  bldData.targetTags,
       position:    { ...pl.position },
       alive:       true,
@@ -428,24 +444,24 @@ export function simulateAttack(
     let bestDist = Infinity;
     const pref = troop.preferredTarget;
 
-    // Helper: nearest alive defense
+    // Helper: nearest alive defense by footprint edge distance
     function nearestDefense(): string | null {
       let id: string | null = null; let d = Infinity;
       for (const [k, def] of defenses) {
         if (!def.alive) continue;
-        const dist = euclidean(troop.position, def.position);
+        const dist = distanceToFootprint(troop.position, def.position, def.size);
         if (dist < d) { d = dist; id = k; }
       }
       return id;
     }
 
-    // Helper: nearest alive neutral building (optional tag filter)
+    // Helper: nearest alive neutral building by footprint edge distance (optional tag filter)
     function nearestBuilding(tag?: string): string | null {
       let id: string | null = null; let d = Infinity;
       for (const [k, bld] of buildings) {
         if (!bld.alive) continue;
         if (tag && !bld.targetTags.includes(tag)) continue;
-        const dist = euclidean(troop.position, bld.position);
+        const dist = distanceToFootprint(troop.position, bld.position, bld.size);
         if (dist < d) { d = dist; id = k; }
       }
       return id;
@@ -461,13 +477,15 @@ export function simulateAttack(
       return nearestBuilding("resource") ?? nearestBuilding() ?? nearestDefense();
     }
 
-    // "None" | "Buildings" | "Heroes" → plus proche toutes catégories
+    // "None" | "Buildings" | "Heroes" → plus proche toutes catégories (par footprint)
     const def = nearestDefense();
     const bld = nearestBuilding();
     if (def === null) return bld;
     if (bld === null) return def;
-    return euclidean(troop.position, defenses.get(def)!.position)
-         <= euclidean(troop.position, buildings.get(bld)!.position)
+    const defEntity = defenses.get(def)!;
+    const bldEntity = buildings.get(bld)!;
+    return distanceToFootprint(troop.position, defEntity.position, defEntity.size)
+        <= distanceToFootprint(troop.position, bldEntity.position, bldEntity.size)
          ? def : bld;
   }
 
@@ -711,9 +729,12 @@ export function simulateAttack(
       const targetEntity = defenses.get(troop.targetId) ?? buildings.get(troop.targetId);
       if (!targetEntity) continue;
 
-      const distToTarget = euclidean(troop.position, targetEntity.position);
+      // Distance to the nearest edge of the target's footprint (not its centre).
+      const distToFootprint = distanceToFootprint(
+        troop.position, targetEntity.position, targetEntity.size,
+      );
 
-      if (distToTarget <= troop.attackRange) {
+      if (distToFootprint <= troop.attackRange) {
         const damage = troop.dps * TICK;
         const actualDamage = Math.min(damage, targetEntity.hp);
         targetEntity.hp -= actualDamage;
@@ -724,6 +745,7 @@ export function simulateAttack(
           targetEntity.destroyedAt = simTime;
         }
       } else {
+        // Move toward the building centre until the footprint is in range.
         troop.position = stepToward(troop.position, targetEntity.position, troop.speed * TICK);
       }
     }
