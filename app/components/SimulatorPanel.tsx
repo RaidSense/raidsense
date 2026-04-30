@@ -3,11 +3,13 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { TROOPS } from "../../lib/data/troops";
 import { DEFENSES } from "../../lib/data/defenses";
+import { NEUTRAL_BUILDINGS } from "../../lib/data/neutral-buildings";
 import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
 import type {
   SimulationResult,
   TroopDeployment,
   DefensePlacement,
+  BuildingPlacement,
   Vec2,
 } from "../../lib/engine/calculator";
 
@@ -20,8 +22,19 @@ const DEPLOY_MARGIN  = 5;  // tiles from each edge that form the valid deploymen
 const DROP_Y         = GRID_SIZE - 1;
 const DROP_X_MIN     = DEPLOY_MARGIN;
 const DROP_X_MAX     = GRID_SIZE - DEPLOY_MARGIN - 1;
-const MAX_TROOP_SLOTS = 5;
-const MAX_DEFENSES    = 8;
+const MAX_TROOP_SLOTS  = 5;
+const MAX_DEFENSES     = 8;
+const MAX_BUILDINGS    = 12;
+
+// Category colour for neutral buildings on the grid
+const BUILDING_FILL: Record<string, string> = {
+  "resource": "#ca8a04",   // gold for resources
+  "special":  "#6366f1",   // indigo for special (clan castle, hero hall…)
+  "building": "#475569",   // slate for generic buildings
+};
+
+const BUILDING_PALETTE_LEVELS: Record<string, number> = {};
+for (const b of NEUTRAL_BUILDINGS) BUILDING_PALETTE_LEVELS[b.id] = b.levels[b.levels.length - 1].level;
 
 const TROOP_ABBREV: Record<string, string> = {
   "barbarian":      "Ba", "archer":         "Ar", "giant":    "Gi",
@@ -32,12 +45,12 @@ const TROOP_ABBREV: Record<string, string> = {
 };
 
 const TROOP_COLORS = [
-  "text-amber-400", "text-sky-400", "text-emerald-400",
+  "text-orange-400", "text-sky-400", "text-emerald-400",
   "text-violet-400", "text-rose-400",
 ] as const;
 
 const TROOP_COLORS_HEX = [
-  "#fbbf24", "#38bdf8", "#34d399", "#a78bfa", "#fb7185",
+  "#fb923c", "#38bdf8", "#34d399", "#a78bfa", "#fb7185",
 ] as const;
 
 const DEFENSE_FILL: Record<string, string> = {
@@ -84,6 +97,14 @@ interface PlacedDefense {
   y: number;
   /** "ground"|"both" for X-Bow, "single"|"multi" for Inferno Tower */
   mode?: string;
+}
+
+interface PlacedBuilding {
+  instanceId: string;
+  buildingId: string;
+  level: number;
+  x: number;
+  y: number;
 }
 
 interface TroopMeta {
@@ -207,6 +228,18 @@ function buildDefensePlacements(placed: PlacedDefense[]): DefensePlacement[] {
   });
 }
 
+function buildNeutralBuildingPlacements(placed: PlacedBuilding[]): BuildingPlacement[] {
+  return placed.map((b) => {
+    const size = NEUTRAL_BUILDINGS.find((nb) => nb.id === b.buildingId)?.size ?? 1;
+    return {
+      instanceId: b.instanceId,
+      buildingId: b.buildingId,
+      level:      b.level,
+      position:   { x: b.x + size / 2, y: b.y + size / 2 },
+    };
+  });
+}
+
 // ── SimulatorPanel ─────────────────────────────────────────────────────────
 
 export default function SimulatorPanel() {
@@ -219,6 +252,8 @@ export default function SimulatorPanel() {
     { instanceId: "di-2", defenseId: "mortar",       level:  6, x: 14, y: 28 },
   ]);
   const [palLevels, setPalLevels] = useState<Record<string, number>>(PALETTE_DEFAULTS);
+  const [placedBuildings, setPlacedBuildings] = useState<PlacedBuilding[]>([]);
+  const [palBuildingLevels, setPalBuildingLevels] = useState<Record<string, number>>(BUILDING_PALETTE_LEVELS);
   const [result, setResult]       = useState<SimulationResult | null>(null);
   const [meta, setMeta]           = useState<TroopMeta[]>([]);
   const [cellSize, setCellSize]   = useState<number>(CELL);
@@ -481,6 +516,49 @@ export default function SimulatorPanel() {
     clearResult();
   }
 
+  function handlePlaceBuilding(x: number, y: number, buildingId: string, level: number) {
+    setPlacedBuildings((prev) => {
+      if (prev.length >= MAX_BUILDINGS) return prev;
+      const size = NEUTRAL_BUILDINGS.find((b) => b.id === buildingId)?.size ?? 1;
+      if (x + size > GRID_SIZE || y + size > GRID_SIZE) return prev;
+      const allPlaced = [...placed, ...prev.map((b) => ({ ...b, defenseId: b.buildingId }))];
+      const overlaps = allPlaced.some((d) => {
+        const s = (DEFENSES.find((def) => def.id === (d as PlacedDefense).defenseId)?.size)
+               ?? (NEUTRAL_BUILDINGS.find((nb) => nb.id === (d as PlacedBuilding).buildingId)?.size)
+               ?? 1;
+        return !(d.x + s <= x || x + size <= d.x || d.y + s <= y || y + size <= d.y);
+      });
+      if (overlaps) return prev;
+      return [...prev, { instanceId: `nb-${Date.now()}`, buildingId, level, x, y }];
+    });
+    clearResult();
+  }
+
+  function handleRemoveBuilding(instanceId: string) {
+    setPlacedBuildings((p) => p.filter((b) => b.instanceId !== instanceId));
+    clearResult();
+  }
+
+  function handleMoveBuilding(instanceId: string, toX: number, toY: number) {
+    setPlacedBuildings((prev) => {
+      const bld = prev.find((b) => b.instanceId === instanceId);
+      if (!bld) return prev;
+      const size = NEUTRAL_BUILDINGS.find((nb) => nb.id === bld.buildingId)?.size ?? 1;
+      if (toX + size > GRID_SIZE || toY + size > GRID_SIZE) return prev;
+      const others = prev.filter((b) => b.instanceId !== instanceId);
+      const allOthers = [...placed, ...others.map((b) => ({ ...b, defenseId: b.buildingId }))];
+      const overlaps = allOthers.some((d) => {
+        const s = (DEFENSES.find((def) => def.id === (d as PlacedDefense).defenseId)?.size)
+               ?? (NEUTRAL_BUILDINGS.find((nb) => nb.id === (d as PlacedBuilding).buildingId)?.size)
+               ?? 1;
+        return !(d.x + s <= toX || toX + size <= d.x || d.y + s <= toY || toY + size <= d.y);
+      });
+      if (overlaps) return prev;
+      return prev.map((b) => b.instanceId === instanceId ? { ...b, x: toX, y: toY } : b);
+    });
+    setReplayPlaying(false); setShowReplay(false); setResult(null); setMeta([]);
+  }
+
   function handleMove(instanceId: string, toX: number, toY: number) {
     setPlaced((prev) => {
       const defense = prev.find((d) => d.instanceId === instanceId);
@@ -516,7 +594,11 @@ export default function SimulatorPanel() {
       ({ deployments, meta: m } = buildDeployments(troopSlots));
     }
     setMeta(m);
-    const r = simulateAttack(deployments, buildDefensePlacements(placed));
+    const r = simulateAttack(
+      deployments,
+      buildDefensePlacements(placed),
+      buildNeutralBuildingPlacements(placedBuildings),
+    );
     durationRef.current = r.durationSeconds;
     setResult(r);
   }
@@ -536,7 +618,7 @@ export default function SimulatorPanel() {
 
       {/* Header */}
       <header className="space-y-1">
-        <h1 className="text-4xl font-bold tracking-tight text-amber-400">RaidSense</h1>
+        <h1 className="text-4xl font-bold tracking-tight text-cyan-400">RaidSense</h1>
         <p className="text-sm text-slate-400">Simulateur d&apos;attaque Clash of Clans</p>
       </header>
 
@@ -554,6 +636,10 @@ export default function SimulatorPanel() {
             onRemove={handleRemove}
             onMove={handleMove}
             onModeToggle={handleModeToggle}
+            placedBuildings={placedBuildings}
+            onPlaceBuilding={handlePlaceBuilding}
+            onRemoveBuilding={handleRemoveBuilding}
+            onMoveBuilding={handleMoveBuilding}
             placementMode={placementMode}
             placedTroops={placedTroops}
             onPlaceTroop={handlePlaceTroop}
@@ -581,7 +667,7 @@ export default function SimulatorPanel() {
         <div className="flex-1 space-y-4" style={{ minWidth: 300 }}>
 
           {/* Defense palette */}
-          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-5 space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-100">Défenses</h2>
               <span className="text-xs text-slate-500">{placed.length}/{MAX_DEFENSES} sur la grille</span>
@@ -593,16 +679,29 @@ export default function SimulatorPanel() {
             />
           </section>
 
+          {/* Neutral building palette */}
+          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-100">Bâtiments</h2>
+              <span className="text-xs text-slate-500">{placedBuildings.length}/{MAX_BUILDINGS} sur la grille</span>
+            </div>
+            <BuildingPalette
+              palLevels={palBuildingLevels}
+              onLevelChange={(id, lv) => setPalBuildingLevels((p) => ({ ...p, [id]: lv }))}
+              cellSize={cellSize}
+            />
+          </section>
+
           {/* Troop composer */}
-          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
+          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-100">Troupes</h2>
               <button
                 onClick={() => { setPlacementMode((p) => !p); setSelectedSlotId(null); clearResult(); }}
                 className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
                   placementMode
-                    ? "bg-amber-500 text-slate-950"
-                    : "border border-slate-700 text-slate-400 hover:border-slate-500"
+                    ? "bg-cyan-500 text-black"
+                    : "border border-[#1e2a45] text-slate-400 hover:border-slate-500"
                 }`}
               >
                 {placementMode ? "✓ Placement manuel" : "Placement manuel"}
@@ -636,7 +735,7 @@ export default function SimulatorPanel() {
       <button
         onClick={handleSimulate}
         disabled={!placed.length || (placementMode ? placedTroops.length === 0 : !totalTroops)}
-        className="w-full rounded-xl bg-amber-500 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 active:bg-amber-600 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-slate-950"
+        className="w-full rounded-xl bg-cyan-500 py-3 text-sm font-semibold text-black transition-colors hover:bg-cyan-400 active:bg-cyan-600 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-black"
       >
         Simuler l&apos;attaque
       </button>
@@ -645,7 +744,7 @@ export default function SimulatorPanel() {
       {result && !showReplay && (
         <button
           onClick={startReplay}
-          className="w-full rounded-xl border border-amber-500/40 bg-amber-500/10 py-2.5 text-sm font-semibold text-amber-400 transition-colors hover:bg-amber-500/20"
+          className="w-full rounded-xl border border-cyan-500/40 bg-cyan-500/10 py-2.5 text-sm font-semibold text-cyan-400 transition-colors hover:bg-cyan-500/20"
         >
           ▶ Voir le replay
         </button>
@@ -669,6 +768,7 @@ export default function SimulatorPanel() {
           result={result}
           meta={meta}
           placed={placed}
+          placedBuildings={placedBuildings}
           totalTroops={totalTroops}
           survivors={survivors}
         />
@@ -704,6 +804,10 @@ function BattleGrid({
   targetLines,
   onMove,
   onModeToggle,
+  placedBuildings,
+  onPlaceBuilding,
+  onRemoveBuilding,
+  onMoveBuilding,
   onCellSizeChange,
   result: replayResult,
   replayTime,
@@ -724,6 +828,10 @@ function BattleGrid({
   targetLines?:  { x1: number; y1: number; x2: number; y2: number; color: string }[];
   onMove?: (instanceId: string, toX: number, toY: number) => void;
   onModeToggle?: (instanceId: string) => void;
+  placedBuildings?: PlacedBuilding[];
+  onPlaceBuilding?: (x: number, y: number, buildingId: string, level: number) => void;
+  onRemoveBuilding?: (instanceId: string) => void;
+  onMoveBuilding?: (instanceId: string, toX: number, toY: number) => void;
   onCellSizeChange?: (size: number) => void;
   placementMode?: boolean;
   placedTroops?: PlacedTroop[];
@@ -789,6 +897,13 @@ function BattleGrid({
     if (!containerRef.current?.contains(e.relatedTarget as Node | null)) setDragCell(null);
   }
 
+  function buildingAt(tileX: number, tileY: number) {
+    return placedBuildings?.find((b) => {
+      const size = NEUTRAL_BUILDINGS.find((nb) => nb.id === b.buildingId)?.size ?? 1;
+      return tileX >= b.x && tileX < b.x + size && tileY >= b.y && tileY < b.y + size;
+    });
+  }
+
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
     const c = cellAt(e);
@@ -796,9 +911,12 @@ function BattleGrid({
     if (!c) return;
     try {
       const payload = JSON.parse(e.dataTransfer.getData("text/plain"));
-      if (payload.existingInstanceId) {
-        // Moving an already-placed defense
+      if (payload.existingBuildingInstanceId) {
+        onMoveBuilding?.(payload.existingBuildingInstanceId, c.x, c.y);
+      } else if (payload.existingInstanceId) {
         onMove?.(payload.existingInstanceId, c.x, c.y);
+      } else if (payload.buildingId) {
+        onPlaceBuilding?.(c.x, c.y, payload.buildingId, payload.level);
       } else {
         onPlace(c.x, c.y, payload.defenseId, payload.level);
       }
@@ -809,11 +927,12 @@ function BattleGrid({
     const c = cellAt(e);
     if (!c) return;
     if (placementMode) {
-      // Check if clicking on an existing placed troop
       const existingTroop = placedTroops?.find((t) => t.x === c.x && t.y === c.y);
       if (existingTroop) { onRemovePlacedTroop?.(existingTroop.instanceId); return; }
       onPlaceTroop?.(c.x, c.y);
     } else {
+      const b = buildingAt(c.x, c.y);
+      if (b) { onRemoveBuilding?.(b.instanceId); return; }
       const d = defenseAt(c.x, c.y);
       if (d) { setHoveredDefenseId(null); onRemove(d.instanceId); }
     }
@@ -903,19 +1022,71 @@ function BattleGrid({
     setTimeout(() => document.body.removeChild(ghost), 0);
   }
 
+  // Squares for neutral buildings
+  const buildingSquares = (placedBuildings ?? []).map((b) => {
+    const bldData  = NEUTRAL_BUILDINGS.find((nb) => nb.id === b.buildingId);
+    const name     = bldData?.name ?? b.buildingId;
+    const size     = bldData?.size ?? 1;
+    const category = bldData?.category ?? "building";
+    const destroyed = replayDestroyedIds?.has(b.instanceId) ?? false;
+    const fill      = BUILDING_FILL[category] ?? BUILDING_FILL["building"];
+    const pxSize    = size * cellPx - 2;
+    const fontSize  = Math.max(6, Math.min(11, pxSize * 0.30));
+    return (
+      <div
+        key={b.instanceId}
+        draggable
+        title={`${name} Lv${b.level} (${b.x},${b.y}) — glisser: déplacer · clic: supprimer`}
+        onDragStart={(e) => {
+          e.dataTransfer.setData("text/plain", JSON.stringify({ existingBuildingInstanceId: b.instanceId, buildingId: b.buildingId, level: b.level }));
+          e.dataTransfer.effectAllowed = "move";
+          const tilePx = Math.round(cellPx * size);
+          const ghost = document.createElement("div");
+          ghost.style.cssText = `width:${tilePx}px;height:${tilePx}px;background:${fill};border-radius:4px;opacity:0.75;border:1px dashed rgba(255,255,255,0.4);position:fixed;top:-${tilePx*2}px;left:0;pointer-events:none;`;
+          document.body.appendChild(ghost);
+          e.dataTransfer.setDragImage(ghost, tilePx / 2, tilePx / 2);
+          setTimeout(() => document.body.removeChild(ghost), 0);
+        }}
+        onClick={(e) => { e.stopPropagation(); onRemoveBuilding?.(b.instanceId); }}
+        style={{
+          position:        "absolute",
+          left:            b.x * cellPx + 1,
+          top:             b.y * cellPx + 1,
+          width:           pxSize,
+          height:          pxSize,
+          backgroundColor: fill,
+          borderRadius:    2,
+          border:          "1px dashed rgba(255,255,255,0.25)",
+          cursor:          "grab",
+          zIndex:          1,
+          pointerEvents:   "auto",
+          opacity:         destroyed ? 0.1 : 0.85,
+          display:         "flex",
+          alignItems:      "center",
+          justifyContent:  "center",
+          overflow:        "hidden",
+        }}
+      >
+        <span style={{ color: "rgba(255,255,255,0.8)", fontWeight: 600, fontSize, lineHeight: 1, pointerEvents: "none", userSelect: "none" }}>
+          {b.level}
+        </span>
+      </div>
+    );
+  });
+
   return (
     <div
       ref={containerRef}
-      className="relative rounded-lg border border-slate-700 overflow-hidden"
+      className="relative rounded-lg border border-[#1e2a45] overflow-hidden"
       style={{
         width:           "100%",
         aspectRatio:     "1 / 1",
         backgroundImage: [
-          "linear-gradient(to right,  #1e293b 1px, transparent 1px)",
-          "linear-gradient(to bottom, #1e293b 1px, transparent 1px)",
+          "linear-gradient(to right,  #0c1628 1px, transparent 1px)",
+          "linear-gradient(to bottom, #0c1628 1px, transparent 1px)",
         ].join(","),
         backgroundSize:  `${cellPx}px ${cellPx}px`,
-        backgroundColor: "#0f172a",
+        backgroundColor: "#000000",
         cursor:          "crosshair",
       }}
       onDragOver={onDragOver}
@@ -925,6 +1096,8 @@ function BattleGrid({
       onMouseMove={onMouseMove}
       onMouseLeave={() => setHoveredDefenseId(null)}
     >
+      {/* Neutral buildings (behind defenses) */}
+      {buildingSquares}
       {/* Defense markers */}
       {defenseSquares}
 
@@ -1124,7 +1297,7 @@ function ReplayControls({
   onClose: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+    <div className="rounded-2xl border border-[#1e2a45] bg-[#06080f] p-4 space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-slate-300">Replay</span>
         <button
@@ -1144,7 +1317,7 @@ function ReplayControls({
           step={0.05}
           value={replayTime}
           onChange={(e) => onSeek(Number(e.target.value))}
-          className="w-full accent-amber-400 cursor-pointer"
+          className="w-full accent-cyan-400 cursor-pointer"
         />
         <div className="flex justify-between text-xs text-slate-500">
           <span>{replayTime.toFixed(1)} s</span>
@@ -1156,7 +1329,7 @@ function ReplayControls({
       <div className="flex items-center gap-2">
         <button
           onClick={onPlayPause}
-          className="rounded-lg bg-amber-500 px-4 py-1.5 text-xs font-semibold text-slate-950 hover:bg-amber-400 active:bg-amber-600 transition-colors"
+          className="rounded-lg bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-black hover:bg-cyan-400 active:bg-cyan-600 transition-colors"
         >
           {playing ? "⏸ Pause" : "▶ Play"}
         </button>
@@ -1164,8 +1337,8 @@ function ReplayControls({
           onClick={onSpeedToggle}
           className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
             speed === 2
-              ? "border-amber-500 bg-amber-500/10 text-amber-400"
-              : "border-slate-700 text-slate-400 hover:border-slate-500"
+              ? "border-cyan-500 bg-cyan-500/10 text-cyan-400"
+              : "border-[#1e2a45] text-slate-400 hover:border-slate-500"
           }`}
         >
           ×{speed}
@@ -1212,8 +1385,8 @@ function TroopPlacementPanel({
                 onClick={() => onSelectSlot(sel ? null : slot.slotId)}
                 className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
                   sel
-                    ? "border-amber-500 bg-amber-500/15 text-amber-300"
-                    : "border-slate-700 text-slate-400 hover:border-slate-500"
+                    ? "border-cyan-500 bg-cyan-500/15 text-cyan-300"
+                    : "border-[#1e2a45] text-slate-400 hover:border-slate-500"
                 }`}
               >
                 <span className={color}>{abbr}</span>
@@ -1238,7 +1411,7 @@ function TroopPlacementPanel({
               const slotIdx = slots.findIndex((s) => s.troopId === pt.troopId);
               const color = TROOP_COLORS[Math.max(0, slotIdx) % TROOP_COLORS.length];
               return (
-                <div key={pt.instanceId} className="flex items-center gap-2 rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs">
+                <div key={pt.instanceId} className="flex items-center gap-2 rounded-lg bg-[#0d1020] px-2.5 py-1.5 text-xs">
                   <span className={`font-semibold ${color}`}>{abbr}</span>
                   <span className="text-slate-500">Lv{pt.level}</span>
                   <span className="text-slate-600">({pt.x},{pt.y})</span>
@@ -1247,7 +1420,7 @@ function TroopPlacementPanel({
                     type="number" min={0} step={0.5}
                     value={pt.deployAt}
                     onChange={(e) => onUpdateTiming(pt.instanceId, Number(e.target.value))}
-                    className="w-12 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    className="w-12 rounded border border-[#1e2a45] bg-[#06080f] px-1 py-0.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
                   />
                   <span className="text-slate-600">s</span>
                   <button
@@ -1312,7 +1485,7 @@ function DefensePalette({
               // Le navigateur prend un snapshot synchrone ; on peut retirer
               setTimeout(() => document.body.removeChild(ghost), 0);
             }}
-            className="flex items-center gap-2.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none"
+            className="flex items-center gap-2.5 rounded-lg border border-[#1e2a45] bg-[#0d1020] px-3 py-2 cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none"
           >
             {/* Color swatch */}
             <div className="flex-shrink-0 rounded-sm" style={{ width: 10, height: 10, backgroundColor: fill }} />
@@ -1331,7 +1504,7 @@ function DefensePalette({
               <select
                 value={level}
                 onChange={(e) => onLevelChange(def.id, Number(e.target.value))}
-                className="rounded border border-slate-600 bg-slate-900 text-xs text-slate-200 px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                className="rounded border border-[#252f50] bg-[#06080f] text-xs text-slate-200 px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500"
               >
                 {def.levels.map((l) => (
                   <option key={l.level} value={l.level}>Lv {l.level}</option>
@@ -1340,6 +1513,64 @@ function DefensePalette({
             </div>
 
             {/* Drag hint */}
+            <span className="text-slate-600 text-xs" aria-hidden>⠿</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── BuildingPalette ────────────────────────────────────────────────────────
+
+function BuildingPalette({
+  palLevels,
+  onLevelChange,
+  cellSize,
+}: {
+  palLevels: Record<string, number>;
+  onLevelChange: (id: string, level: number) => void;
+  cellSize: number;
+}) {
+  return (
+    <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+      {NEUTRAL_BUILDINGS.map((bld) => {
+        const level = palLevels[bld.id] ?? bld.levels[bld.levels.length - 1].level;
+        const fill  = BUILDING_FILL[bld.category] ?? BUILDING_FILL["building"];
+        return (
+          <div
+            key={bld.id}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData("text/plain", JSON.stringify({ buildingId: bld.id, level }));
+              e.dataTransfer.effectAllowed = "copy";
+              const tilePx = Math.round(cellSize * (bld.size ?? 1));
+              const ghost  = document.createElement("div");
+              ghost.style.cssText = [
+                `width:${tilePx}px`, `height:${tilePx}px`,
+                `background:${fill}`, "border-radius:3px",
+                "border:1px dashed rgba(255,255,255,0.3)", "opacity:0.8",
+                "position:fixed", `top:-${tilePx * 2}px`, "left:0", "pointer-events:none",
+              ].join(";");
+              document.body.appendChild(ghost);
+              e.dataTransfer.setDragImage(ghost, tilePx / 2, tilePx / 2);
+              setTimeout(() => document.body.removeChild(ghost), 0);
+            }}
+            className="flex items-center gap-2.5 rounded-lg border border-[#1e2a45] bg-[#0d1020] px-3 py-1.5 cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none"
+          >
+            <div className="flex-shrink-0 rounded-sm" style={{ width: 8, height: 8, backgroundColor: fill }} />
+            <span className="flex-1 text-xs font-medium text-slate-300 truncate">{bld.name}</span>
+            <div draggable={false} onDragStart={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <select
+                value={level}
+                onChange={(e) => onLevelChange(bld.id, Number(e.target.value))}
+                className="rounded border border-[#252f50] bg-[#06080f] text-xs text-slate-200 px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              >
+                {bld.levels.map((l) => (
+                  <option key={l.level} value={l.level}>Lv {l.level}</option>
+                ))}
+              </select>
+            </div>
             <span className="text-slate-600 text-xs" aria-hidden>⠿</span>
           </div>
         );
@@ -1402,7 +1633,7 @@ function TroopComposer({
             <button
               onClick={() => onRemove(slot.slotId)}
               disabled={slots.length <= 1}
-              className="mb-1 rounded-lg p-1.5 text-lg leading-none text-slate-600 hover:bg-slate-800 hover:text-rose-400 disabled:pointer-events-none disabled:opacity-0 transition-colors"
+              className="mb-1 rounded-lg p-1.5 text-lg leading-none text-slate-600 hover:bg-[#0d1020] hover:text-rose-400 disabled:pointer-events-none disabled:opacity-0 transition-colors"
             >×</button>
           </div>
         );
@@ -1412,7 +1643,7 @@ function TroopComposer({
         <button
           onClick={onAdd}
           disabled={slots.length >= MAX_TROOP_SLOTS}
-          className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
+          className="rounded-lg border border-[#1e2a45] px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
         >
           + Ajouter un type
         </button>
@@ -1428,20 +1659,24 @@ function TroopComposer({
 // ── ResultsSection ─────────────────────────────────────────────────────────
 
 function ResultsSection({
-  result, meta, placed, totalTroops, survivors,
+  result, meta, placed, placedBuildings, totalTroops, survivors,
 }: {
   result: SimulationResult;
   meta: TroopMeta[];
   placed: PlacedDefense[];
+  placedBuildings: PlacedBuilding[];
   totalTroops: number;
   survivors: number;
 }) {
   const destroyedCount = placed.filter(
     (d) => result.defenses[d.instanceId]?.destroyedAt !== null
   ).length;
+  const destroyedBuildingsCount = placedBuildings.filter(
+    (b) => result.buildings[b.instanceId]?.destroyedAt !== null
+  ).length;
 
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-6">
+    <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-6 space-y-6">
       <h2 className="text-base font-semibold text-slate-100">Résultats</h2>
 
       {/* Summary */}
@@ -1458,6 +1693,7 @@ function ResultsSection({
           {placed.map((d) => {
             const dr  = result.defenses[d.instanceId];
             const def = DEFENSES.find((def) => def.id === d.defenseId)!;
+            const firstShot = result.shots.find((s) => s.defInstId === d.instanceId);
             return (
               <DefenseResultCard
                 key={d.instanceId}
@@ -1466,11 +1702,42 @@ function ResultsSection({
                 destroyedAt={dr?.destroyedAt ?? null}
                 damageDealt={dr?.totalDamageDealt ?? 0}
                 color={DEFENSE_FILL[d.defenseId] ?? "#ef4444"}
+                firstShotTime={firstShot?.time ?? null}
+                attackSpeed={def.attackSpeed}
               />
             );
           })}
         </div>
       </div>
+
+      {/* Neutral buildings results */}
+      {placedBuildings.length > 0 && (
+        <div>
+          <p className="mb-3 text-xs text-slate-500">
+            Bâtiments neutres &nbsp;·&nbsp; {destroyedBuildingsCount}/{placedBuildings.length} détruits
+          </p>
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {placedBuildings.map((b) => {
+              const br  = result.buildings[b.instanceId];
+              const bld = NEUTRAL_BUILDINGS.find((nb) => nb.id === b.buildingId);
+              const cat = bld?.category ?? "building";
+              const fill = BUILDING_FILL[cat] ?? BUILDING_FILL["building"];
+              const done = br?.destroyedAt !== null;
+              return (
+                <div key={b.instanceId} className="rounded-xl bg-[#0d1020] px-3 py-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="h-2 w-2 flex-shrink-0 rounded-sm" style={{ backgroundColor: fill }} />
+                    <span className="truncate text-xs text-slate-200">{bld?.name ?? b.buildingId} Lv{b.level}</span>
+                  </div>
+                  <span className={`flex-shrink-0 text-xs font-semibold ${done ? "text-cyan-400" : "text-slate-500"}`}>
+                    {done ? `t=${br.destroyedAt!.toFixed(1)}s` : "Survit"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Eliminated troops */}
       {meta.some((m) => result.troops[m.instanceId]?.destroyedAt !== null) && (
@@ -1520,7 +1787,7 @@ function ResultsSection({
                     <>
                       <span className="line-through text-slate-600">{oldName}</span>
                       <span className="text-slate-600">→</span>
-                      <span className={ev.newTargetId ? "text-amber-400" : "text-red-500"}>{newName}</span>
+                      <span className={ev.newTargetId ? "text-cyan-400" : "text-red-500"}>{newName}</span>
                     </>
                   )}
                   <span className="text-slate-700 ml-auto flex-shrink-0">({reasonLabel})</span>
@@ -1537,14 +1804,17 @@ function ResultsSection({
 // ── DefenseResultCard ──────────────────────────────────────────────────────
 
 function DefenseResultCard({
-  name, position, destroyedAt, damageDealt, color,
+  name, position, destroyedAt, damageDealt, color, firstShotTime, attackSpeed,
 }: {
   name: string; position: Vec2;
   destroyedAt: number | null; damageDealt: number; color: string;
+  firstShotTime: number | null; attackSpeed: number;
 }) {
   const done = destroyedAt !== null;
+  const delay = firstShotTime !== null ? firstShotTime.toFixed(2) : null;
+  const cooldownOk = firstShotTime !== null && firstShotTime >= attackSpeed - 0.15;
   return (
-    <div className="rounded-xl bg-slate-800 px-4 py-3">
+    <div className="rounded-xl bg-[#0d1020] px-4 py-3">
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <div className="mt-0.5 h-2.5 w-2.5 flex-shrink-0 rounded-sm" style={{ backgroundColor: color }} />
@@ -1553,7 +1823,7 @@ function DefenseResultCard({
             <p className="text-xs text-slate-500">({position.x}, {position.y})</p>
           </div>
         </div>
-        <span className={`flex-shrink-0 text-xs font-semibold ${done ? "text-amber-400" : "text-slate-500"}`}>
+        <span className={`flex-shrink-0 text-xs font-semibold ${done ? "text-cyan-400" : "text-slate-500"}`}>
           {done ? "Détruit" : "Survit"}
         </span>
       </div>
@@ -1561,6 +1831,12 @@ function DefenseResultCard({
         {done ? `t=${destroyedAt!.toFixed(1)} sec · ` : ""}
         {damageDealt.toLocaleString()} HP infligés
       </p>
+      {delay !== null && (
+        <p className={`mt-0.5 text-xs font-mono ${cooldownOk ? "text-emerald-400" : "text-rose-400"}`}>
+          {cooldownOk ? "✓" : "✗"} 1er tir à t={delay}s
+          <span className="text-slate-600 ml-1">(vitesse d&apos;attaque : {attackSpeed}s)</span>
+        </p>
+      )}
     </div>
   );
 }
@@ -1579,7 +1855,7 @@ function HpTable({ result, meta }: { result: SimulationResult; meta: TroopMeta[]
   return (
     <table className="w-full text-right font-mono text-xs">
       <thead>
-        <tr className="border-b border-slate-700">
+        <tr className="border-b border-[#1e2a45]">
           <th className="pb-1 pr-4 text-left" />
           {groups.map((g) => (
             <th key={g.slotId} colSpan={g.members.length} className={`pb-1 px-2 text-center font-semibold ${g.color}`}>
@@ -1587,21 +1863,21 @@ function HpTable({ result, meta }: { result: SimulationResult; meta: TroopMeta[]
             </th>
           ))}
         </tr>
-        <tr className="border-b border-slate-800 text-slate-500">
+        <tr className="border-b border-[#141a30] text-slate-500">
           <th className="pb-2 pr-4 text-left">t</th>
           {meta.map((m) => <th key={m.instanceId} className={`px-2 pb-2 ${m.color}`}>{m.label}</th>)}
         </tr>
       </thead>
       <tbody>
         {Array.from({ length: maxT + 1 }, (_, t) => (
-          <tr key={t} className="border-b border-slate-800/40 hover:bg-slate-800/30">
+          <tr key={t} className="border-b border-[#141a30]/40 hover:bg-[#0d1020]/30">
             <td className="py-1 pr-4 text-left text-slate-500">{t}s</td>
             {meta.map((m) => {
               const tr   = result.troops[m.instanceId];
               const hp   = tr?.hpPerSecond[t] ?? 0;
               const dead = hp === 0 && tr?.destroyedAt !== null;
               const pct  = hp / m.maxHp;
-              const c    = dead ? "text-slate-600" : pct > 0.6 ? "text-slate-200" : pct > 0.3 ? "text-amber-400" : "text-red-400";
+              const c    = dead ? "text-slate-600" : pct > 0.6 ? "text-slate-200" : pct > 0.3 ? "text-cyan-400" : "text-red-400";
               return <td key={m.instanceId} className={`px-2 py-1 ${c}`}>{dead ? "—" : hp}</td>;
             })}
           </tr>
@@ -1631,7 +1907,7 @@ function Select({ value, onChange, children }: {
     <select
       value={value}
       onChange={onChange}
-      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+      className="w-full rounded-lg border border-[#1e2a45] bg-[#0d1020] px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500"
     >
       {children}
     </select>
@@ -1640,9 +1916,9 @@ function Select({ value, onChange, children }: {
 
 function StatCard({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className="rounded-xl bg-slate-800 px-4 py-3">
+    <div className="rounded-xl bg-[#0d1020] px-4 py-3">
       <p className="text-xs text-slate-500">{label}</p>
-      <p className={`mt-0.5 text-sm font-semibold ${accent ? "text-amber-400" : "text-slate-200"}`}>{value}</p>
+      <p className={`mt-0.5 text-sm font-semibold ${accent ? "text-cyan-400" : "text-slate-200"}`}>{value}</p>
     </div>
   );
 }
