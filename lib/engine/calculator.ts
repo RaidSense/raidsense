@@ -275,10 +275,12 @@ function defenseCanTarget(targetType: TargetType, isAirUnit: boolean): boolean {
  * Simplifications vs. the live game:
  *  - Walls are ignored (troops walk in straight lines to targets).
  *  - Healer healing is not applied (she moves but deals 0 DPS, as per data).
- *  - Inferno Tower ramp-up is not modelled (constant DPS from data).
+ *  - Inferno Tower single-target ramp-up is modelled (3-tier DPS: init/mid/max).
  *  - Eagle Artillery activation threshold is not enforced.
  *  - Splash radius is not applied; each troop / defense deals its DPS to a
  *    single target per tick.
+ *  - Neutral buildings (non-attacking destructibles) are tracked alongside
+ *    defenses and are valid troop targets.
  */
 export function simulateAttack(
   deployments: TroopDeployment[],
@@ -286,7 +288,19 @@ export function simulateAttack(
   buildingPlacements: BuildingPlacement[] = [],
 ): SimulationResult {
   if (DEBUG) {
-    console.log("%c[SIMULATION] Démarrage — cooldown initial activé pour toutes les défenses (sauf TDE)", "color:#f59e0b;font-weight:bold");
+    console.log("%c[SIMULATION] Démarrage — cooldown initial activé pour toutes les défenses (sauf TDE)", "color:#22d3ee;font-weight:bold");
+  }
+
+  // Guard: instanceIds must be unique across troops, defenses, and buildings.
+  const allIds = [
+    ...deployments.map((d) => d.instanceId),
+    ...placements.map((p) => p.instanceId),
+    ...buildingPlacements.map((b) => b.instanceId),
+  ];
+  const seen = new Set<string>();
+  for (const id of allIds) {
+    if (seen.has(id)) throw new Error(`Duplicate instanceId detected: "${id}"`);
+    seen.add(id);
   }
 
   // -------------------------------------------------------------------------

@@ -207,7 +207,7 @@ export const DEFENSES: Defense[] = [
   {
     id: "eagle-artillery",
     name: "Eagle Artillery",
-    targetType: "Ground",
+    targetType: "Ground & Air",
     size: 4,
     attackSpeed: 1,
     notes: "Fires a burst of 3 shells with area splash. Inactive until 150 housing spaces of troops have been deployed. Min range 7 — cannot hit nearby units.",
