@@ -581,7 +581,7 @@ export default function SimulatorPanel() {
   }
 
   function handleSimulate() {
-    if (!placed.length) return;
+    if (!placed.length && !placedBuildings.length) return;
     setShowReplay(false);
     setReplayPlaying(false);
     setReplayTime(0);
@@ -734,7 +734,7 @@ export default function SimulatorPanel() {
       {/* Simulate */}
       <button
         onClick={handleSimulate}
-        disabled={!placed.length || (placementMode ? placedTroops.length === 0 : !totalTroops)}
+        disabled={(!placed.length && !placedBuildings.length) || (placementMode ? placedTroops.length === 0 : !totalTroops)}
         className="w-full rounded-xl bg-cyan-500 py-3 text-sm font-semibold text-black transition-colors hover:bg-cyan-400 active:bg-cyan-600 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-black"
       >
         Simuler l&apos;attaque

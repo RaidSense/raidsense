@@ -414,38 +414,47 @@ export function simulateAttack(
     let bestDist = Infinity;
     const pref = troop.preferredTarget;
 
-    if (pref === "Defenses") {
-      for (const [id, def] of defenses) {
+    // Helper: nearest alive defense
+    function nearestDefense(): string | null {
+      let id: string | null = null; let d = Infinity;
+      for (const [k, def] of defenses) {
         if (!def.alive) continue;
-        const d = euclidean(troop.position, def.position);
-        if (d < bestDist) { bestDist = d; bestId = id; }
+        const dist = euclidean(troop.position, def.position);
+        if (dist < d) { d = dist; id = k; }
       }
-      return bestId;
+      return id;
+    }
+
+    // Helper: nearest alive neutral building (optional tag filter)
+    function nearestBuilding(tag?: string): string | null {
+      let id: string | null = null; let d = Infinity;
+      for (const [k, bld] of buildings) {
+        if (!bld.alive) continue;
+        if (tag && !bld.targetTags.includes(tag)) continue;
+        const dist = euclidean(troop.position, bld.position);
+        if (dist < d) { d = dist; id = k; }
+      }
+      return id;
+    }
+
+    if (pref === "Defenses") {
+      // Priorité : défenses → fallback : bâtiments neutres
+      return nearestDefense() ?? nearestBuilding();
     }
 
     if (pref === "Resources") {
-      for (const [id, bld] of buildings) {
-        if (!bld.alive) continue;
-        if (!bld.targetTags.includes("resource")) continue;
-        const d = euclidean(troop.position, bld.position);
-        if (d < bestDist) { bestDist = d; bestId = id; }
-      }
-      if (bestId !== null) return bestId;
-      // Fallback: nearest anything when no resource building survives.
+      // Priorité : ressources → autres bâtiments → défenses (dernier recours)
+      return nearestBuilding("resource") ?? nearestBuilding() ?? nearestDefense();
     }
 
-    // "None" | "Buildings" | "Heroes" | Resources-fallback → nearest of all
-    for (const [id, def] of defenses) {
-      if (!def.alive) continue;
-      const d = euclidean(troop.position, def.position);
-      if (d < bestDist) { bestDist = d; bestId = id; }
-    }
-    for (const [id, bld] of buildings) {
-      if (!bld.alive) continue;
-      const d = euclidean(troop.position, bld.position);
-      if (d < bestDist) { bestDist = d; bestId = id; }
-    }
-    return bestId;
+    // "None" | "Buildings" | "Heroes" → plus proche toutes catégories
+    const def = nearestDefense();
+    const bld = nearestBuilding();
+    if (def === null) return bld;
+    if (bld === null) return def;
+    return euclidean(troop.position, defenses.get(def)!.position)
+         <= euclidean(troop.position, buildings.get(bld)!.position)
+         ? def : bld;
   }
 
   /**
