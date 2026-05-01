@@ -22,6 +22,9 @@ const EAGLE_INTER_BURST    = EAGLE_BURST_INTERVAL - (EAGLE_BURST_SIZE - 1) * EAG
 // Tiles per second a projectile travels (used by the frontend for animation).
 export const PROJECTILE_SPEED = 25;
 
+// Healer: radius (tiles) around the heal target within which all allies are healed.
+const HEALER_SPLASH_RADIUS = 1.5;
+
 // Set to true to print target-acquisition, cooldown, and shot events to the console.
 const DEBUG = true;
 
@@ -201,6 +204,8 @@ interface TroopState {
   attackSpeed:    number;
   attackCooldown: number;
   splashRadius:   number;
+  hps:            number;   // heal per second (0 for non-healers)
+  maxHp:          number;   // initial HP cap, used to clamp healing
   position: Vec2;
   isAirUnit: boolean;
   preferredTarget: string;
@@ -356,6 +361,8 @@ export function simulateAttack(
       attackSpeed:    troopData.attackSpeed,
       attackCooldown: troopData.attackSpeed,
       splashRadius:   troopData.splashRadius ?? 0,
+      hps:            levelData.hps ?? 0,
+      maxHp:          levelData.hp,
       position: { ...dep.dropPosition },
       isAirUnit,
       preferredTarget: troopData.preferredTarget,
@@ -826,8 +833,58 @@ export function simulateAttack(
 
     // --- Troop phase: each troop moves or attacks a defense / building -------
 
+    // Diminishing returns: count alive & active healers this tick.
+    const activeHealers = [...troops.values()].filter(
+      (t) => t.alive && t.isActive && t.hps > 0,
+    ).length;
+    const healMultiplier =
+      activeHealers <= 2 ? 1.0 :
+      activeHealers <= 4 ? 0.9 :
+      activeHealers === 5 ? 0.7 :
+      activeHealers === 6 ? 0.4 : 0.1;
+
     for (const troop of troops.values()) {
       if (!troop.alive || !troop.isActive) continue;
+
+      // ── Healer: soigne les alliés au lieu d'attaquer ─────────────────────
+      if (troop.hps > 0) {
+        // Cible : troupe non-Healer vivante.
+        // Priorité : blessée (hp < maxHp) avec le plus grand maxHp.
+        // Fallback  : pleine vie, plus grand maxHp.
+        let healTargetId: string | null = null;
+        let bestMaxHp = -1;
+        let fallbackId: string | null = null;
+        let fallbackMaxHp = -1;
+        for (const [id, t] of troops) {
+          if (!t.alive || !t.isActive || id === troop.instanceId) continue;
+          if (t.hps > 0) continue; // ignorer les autres Healers
+          if (t.hp < t.maxHp) {
+            if (t.maxHp > bestMaxHp) { bestMaxHp = t.maxHp; healTargetId = id; }
+          } else {
+            if (t.maxHp > fallbackMaxHp) { fallbackMaxHp = t.maxHp; fallbackId = id; }
+          }
+        }
+        const resolvedTargetId = healTargetId ?? fallbackId;
+        troop.targetId = resolvedTargetId;
+        if (resolvedTargetId === null) continue;
+
+        const healTarget = troops.get(resolvedTargetId)!;
+        const distToTarget = euclidean(troop.position, healTarget.position);
+
+        if (distToTarget <= troop.attackRange) {
+          // Soin continu chaque tick — toutes les troupes non-Healer dans splashRadius autour de la cible.
+          const healPerTick = troop.hps * TICK * healMultiplier;
+          for (const [, t] of troops) {
+            if (!t.alive || !t.isActive || t.hps > 0) continue;
+            if (euclidean(healTarget.position, t.position) <= HEALER_SPLASH_RADIUS) {
+              t.hp = Math.min(t.hp + healPerTick, t.maxHp);
+            }
+          }
+        } else {
+          troop.position = stepToward(troop.position, healTarget.position, troop.speed * TICK);
+        }
+        continue;
+      }
 
       const prevTargetId = troop.targetId;
 

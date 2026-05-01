@@ -5,6 +5,8 @@ export interface TroopLevel {
   level: number;
   hp: number;
   dps: number;
+  /** Heal per second (Healer only). */
+  hps?: number;
   townHallRequired: number;
 }
 
@@ -191,15 +193,15 @@ export const TROOPS: Troop[] = [
     preferredTarget: "None",
     attackSpeed: 0.5,
     levels: [
-      { level: 1, hp: 1200, dps: 0, townHallRequired: 6 },
-      { level: 2, hp: 1440, dps: 0, townHallRequired: 7 },
-      { level: 3, hp: 1728, dps: 0, townHallRequired: 9 },
-      { level: 4, hp: 2074, dps: 0, townHallRequired: 10 },
-      { level: 5, hp: 2489, dps: 0, townHallRequired: 11 },
-      { level: 6, hp: 2987, dps: 0, townHallRequired: 12 },
-      { level: 7, hp: 3584, dps: 0, townHallRequired: 13 },
-      { level: 8, hp: 4301, dps: 0, townHallRequired: 14 },
-      { level: 9, hp: 5161, dps: 0, townHallRequired: 15 },
+      { level: 1, hp: 1200, dps: 0, hps: 45,  townHallRequired: 6  },
+      { level: 2, hp: 1440, dps: 0, hps: 54,  townHallRequired: 7  },
+      { level: 3, hp: 1728, dps: 0, hps: 64,  townHallRequired: 9  },
+      { level: 4, hp: 2074, dps: 0, hps: 80,  townHallRequired: 10 },
+      { level: 5, hp: 2489, dps: 0, hps: 96,  townHallRequired: 11 },
+      { level: 6, hp: 2987, dps: 0, hps: 115, townHallRequired: 12 },
+      { level: 7, hp: 3584, dps: 0, hps: 140, townHallRequired: 13 },
+      { level: 8, hp: 4301, dps: 0, hps: 168, townHallRequired: 14 },
+      { level: 9, hp: 5161, dps: 0, hps: 202, townHallRequired: 15 },
     ],
   },
   {
