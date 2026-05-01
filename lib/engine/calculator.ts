@@ -141,6 +141,14 @@ export interface BuildingResult {
   destroyedAt: number | null;
 }
 
+/** Discrete heal applied to one troop at one tick. Used for precise HP tracking in replay. */
+export interface HealTickEvent {
+  time:         number;
+  healerInstId: string;
+  targetInstId: string;
+  amount:       number;
+}
+
 /** One heal pulse emitted by a Healer. Used to animate orbs in replay. */
 export interface HealEvent {
   /** Simulation time (s) when the orb is fired. */
@@ -203,6 +211,7 @@ export interface SimulationResult {
   durationSeconds: number;
   shots: ShotEvent[];
   heals: HealEvent[];
+  healEvents: HealTickEvent[];
   targetChanges: TargetChangeEvent[];
 }
 
@@ -575,6 +584,7 @@ export function simulateAttack(
 
   const shots:         ShotEvent[]         = [];
   const heals:         HealEvent[]         = [];
+  const healEvents:    HealTickEvent[]     = [];
   const targetChanges: TargetChangeEvent[] = [];
 
   function fireShot(
@@ -896,7 +906,11 @@ export function simulateAttack(
           for (const [, t] of troops) {
             if (!t.alive || !t.isActive || t.hps > 0) continue;
             if (euclidean(healTarget.position, t.position) <= HEALER_SPLASH_RADIUS) {
-              t.hp = Math.min(t.hp + healPerTick, t.maxHp);
+              const actual = Math.min(healPerTick, t.maxHp - t.hp);
+              if (actual > 0) {
+                t.hp += actual;
+                healEvents.push({ time: simTime, healerInstId: troop.instanceId, targetInstId: t.instanceId, amount: actual });
+              }
             }
           }
           // Pulse visuel (une fois par attackSpeed)
@@ -1059,6 +1073,7 @@ export function simulateAttack(
     durationSeconds: Math.round(lastSimTime * 10) / 10,
     shots,
     heals,
+    healEvents,
     targetChanges,
   };
 }
