@@ -121,6 +121,8 @@ export interface TroopResult {
   positionPerSecond: Vec2[];
   /** Exact simulation time in seconds when this troop died. Null if survived. */
   destroyedAt: number | null;
+  /** Underground state snapshot at t = 0, 1, 2, … seconds (Miner only; always false otherwise). */
+  undergroundPerSecond: boolean[];
 }
 
 /** Per-defense simulation output. */
@@ -232,6 +234,8 @@ interface TroopState {
   hps:                 number;   // heal per second (0 for non-healers)
   maxHp:               number;   // initial HP cap, used to clamp healing
   healVisualCooldown:  number;   // counts down; emits HealEvent when ≤ 0
+  isUnderground:       boolean;  // true while Miner is burrowing toward target
+  undergroundHistory:  boolean[];
   position: Vec2;
   isAirUnit: boolean;
   preferredTarget: string;
@@ -390,6 +394,8 @@ export function simulateAttack(
       hps:                levelData.hps ?? 0,
       maxHp:              levelData.hp,
       healVisualCooldown: 0,
+      isUnderground:      dep.troopId === "miner",
+      undergroundHistory: [],
       position: { ...dep.dropPosition },
       isAirUnit,
       preferredTarget: troopData.preferredTarget,
@@ -551,6 +557,7 @@ export function simulateAttack(
 
     for (const [id, troop] of troops) {
       if (!troop.alive || !troop.isActive) continue;
+      if (troop.isUnderground) continue;
       if (!defenseCanTarget(def.targetType, troop.isAirUnit)) continue;
       const d = euclidean(def.position, troop.position);
       if (d >= def.minRange && d <= def.maxRange && d < bestDist) {
@@ -570,6 +577,7 @@ export function simulateAttack(
     troop.hpHistory.push(Math.ceil(troop.hp));
     troop.targetHistory.push(troop.targetId);
     troop.positionHistory.push({ ...troop.position });
+    troop.undergroundHistory.push(troop.isUnderground);
   }
   for (const def of defenses.values()) {
     def.hpHistory.push(Math.ceil(def.hp));
@@ -970,6 +978,11 @@ export function simulateAttack(
         troop.position, targetEntity.position, targetEntity.size,
       );
 
+      // Miner: sous terre en déplacement, à la surface en attaque
+      if (troop.troopId === "miner") {
+        troop.isUnderground = distToFootprint > troop.attackRange;
+      }
+
       if (distToFootprint <= troop.attackRange) {
         troop.attackCooldown -= TICK;
         if (troop.attackCooldown <= 0) {
@@ -1013,6 +1026,7 @@ export function simulateAttack(
         troop.hpHistory.push(troop.alive ? Math.ceil(troop.hp) : 0);
         troop.targetHistory.push(troop.alive ? troop.targetId : null);
         troop.positionHistory.push({ ...troop.position });
+        troop.undergroundHistory.push(troop.isUnderground);
       }
       for (const def of defenses.values()) {
         def.hpHistory.push(def.alive ? Math.ceil(def.hp) : 0);
@@ -1039,11 +1053,12 @@ export function simulateAttack(
   const troopResults: Record<string, TroopResult> = {};
   for (const [id, troop] of troops) {
     troopResults[id] = {
-      instanceId: id,
-      hpPerSecond: troop.hpHistory,
-      targetPerSecond: troop.targetHistory,
-      positionPerSecond: troop.positionHistory,
-      destroyedAt: troop.destroyedAt,
+      instanceId:           id,
+      hpPerSecond:          troop.hpHistory,
+      targetPerSecond:      troop.targetHistory,
+      positionPerSecond:    troop.positionHistory,
+      destroyedAt:          troop.destroyedAt,
+      undergroundPerSecond: troop.undergroundHistory,
     };
   }
 

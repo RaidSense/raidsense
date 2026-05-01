@@ -338,8 +338,19 @@ export default function SimulatorPanel() {
         if (ev.time > tickTime) break;
         if (ev.targetInstId === m.instanceId) hp = Math.min(hp + ev.amount, m.maxHp);
       }
-      const hpPct = m.maxHp > 0 ? Math.max(0, Math.min(1, hp / m.maxHp)) : 0;
-      return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label, hpPct }];
+      const hpPct        = m.maxHp > 0 ? Math.max(0, Math.min(1, hp / m.maxHp)) : 0;
+      const sIdx         = Math.floor(replayTime);
+      const isUnderground = tr.undergroundPerSecond?.[sIdx] ?? false;
+      let trailCx: number | undefined;
+      let trailCy: number | undefined;
+      if (isUnderground) {
+        const trailStart = tr.positionPerSecond[sIdx];
+        if (trailStart) {
+          trailCx = (trailStart.x + 0.5) * cellSize;
+          trailCy = (trailStart.y + 0.5) * cellSize;
+        }
+      }
+      return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label, hpPct, isUnderground, trailCx, trailCy }];
     });
   }, [showReplay, result, meta, replayTime, cellSize]);
 
@@ -909,7 +920,10 @@ interface ReplayDot {
   cy: number;
   fill: string;
   label: string;
-  hpPct: number; // 0–1, current HP / max HP
+  hpPct: number;       // 0–1, current HP / max HP
+  isUnderground: boolean;
+  trailCx?: number;    // trail start X in canvas coords (set when underground)
+  trailCy?: number;
 }
 
 function BattleGrid({
@@ -1462,24 +1476,40 @@ function BattleGrid({
           const hpColor = dot.hpPct > 0.6 ? "#22c55e" : dot.hpPct > 0.3 ? "#f59e0b" : "#ef4444";
           return (
             <g key={dot.id}>
-              {/* Troop hitbox — white ring */}
-              <circle cx={dot.cx} cy={dot.cy} r={5.5}
-                fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth={0.75} />
-              <circle cx={dot.cx} cy={dot.cy} r={5} fill={dot.fill} stroke="rgba(0,0,0,0.6)" strokeWidth={1} />
-              <text
-                x={dot.cx} y={dot.cy + 1}
-                textAnchor="middle" dominantBaseline="middle"
-                fontSize={5} fontFamily="monospace" fontWeight="bold"
-                fill="rgba(0,0,0,0.7)"
-                style={{ pointerEvents: "none", userSelect: "none" }}
-              >
-                {dot.label}
-              </text>
-              {/* HP bar */}
-              {(!hpOnDamageOnly || dot.hpPct < 1) && (
+              {/* Miner underground: sillon de forage + indicateur discret */}
+              {dot.isUnderground && (
                 <>
-                  <rect x={barX} y={barY} width={BAR_W} height={BAR_H} rx={1} fill="rgba(0,0,0,0.45)" />
-                  <rect x={barX} y={barY} width={BAR_W * dot.hpPct} height={BAR_H} rx={1} fill={hpColor} />
+                  {dot.trailCx !== undefined && dot.trailCy !== undefined && (
+                    <line
+                      x1={dot.trailCx} y1={dot.trailCy} x2={dot.cx} y2={dot.cy}
+                      stroke="#92400e" strokeWidth={2.5}
+                      strokeDasharray="3 4" strokeLinecap="round" opacity={0.65}
+                    />
+                  )}
+                  <circle cx={dot.cx} cy={dot.cy} r={3} fill="#92400e" opacity={0.30} />
+                </>
+              )}
+              {/* Sprite normal — masqué quand sous terre */}
+              {!dot.isUnderground && (
+                <>
+                  <circle cx={dot.cx} cy={dot.cy} r={5.5}
+                    fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth={0.75} />
+                  <circle cx={dot.cx} cy={dot.cy} r={5} fill={dot.fill} stroke="rgba(0,0,0,0.6)" strokeWidth={1} />
+                  <text
+                    x={dot.cx} y={dot.cy + 1}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fontSize={5} fontFamily="monospace" fontWeight="bold"
+                    fill="rgba(0,0,0,0.7)"
+                    style={{ pointerEvents: "none", userSelect: "none" }}
+                  >
+                    {dot.label}
+                  </text>
+                  {(!hpOnDamageOnly || dot.hpPct < 1) && (
+                    <>
+                      <rect x={barX} y={barY} width={BAR_W} height={BAR_H} rx={1} fill="rgba(0,0,0,0.45)" />
+                      <rect x={barX} y={barY} width={BAR_W * dot.hpPct} height={BAR_H} rx={1} fill={hpColor} />
+                    </>
+                  )}
                 </>
               )}
             </g>
