@@ -606,25 +606,56 @@ export function simulateAttack(
   }
 
   /**
-   * Scattershot V1 — zoned falloff around the primary impact point.
-   *  ≤ 1 tile  → 100% of shot damage
-   *  1–5 tiles → 50%  of shot damage
-   * Isolated here for future directional refinement (trajectory-based rear arc).
+   * Scattershot directional cone splash.
+   *
+   * Origin  : primary target position.
+   * Axis    : normalised vector from defender → primary, then extended behind.
+   *
+   * A troop is inside the cone when:
+   *   forwardDistance  ∈ (0, 5]            (strictly behind impact, max 5 tiles)
+   *   lateralDistance  ≤ 1 + (fwd/5) * 2   (half-width: 1 tile at origin → 3 at depth 5)
+   *
+   * Damage multiplier = clamp(1 − (fwd/5) * 0.5 ,  0.5, 1.0)
+   *   → 100 % at depth 0,  50 % at depth 5.
+   *
+   * Primary target is never hit twice (excluded by instanceId check).
    */
-  function applyScattershotSplash(
+  function applyScattershotConeSplash(
     def:     DefenseState,
     primary: TroopState,
     damage:  number,
     simTime: number,
   ): string[] {
+    // Normalised direction: defender → primary target
+    const rawDx = primary.position.x - def.position.x;
+    const rawDy = primary.position.y - def.position.y;
+    const rawLen = Math.sqrt(rawDx * rawDx + rawDy * rawDy);
+    if (rawLen === 0) return [];
+    const nx = rawDx / rawLen;
+    const ny = rawDy / rawLen;
+
     const hit: string[] = [];
     for (const [id, t] of troops) {
       if (!t.alive || !t.isActive || id === primary.instanceId) continue;
       if (!defenseCanTarget(def.targetType, t.isAirUnit)) continue;
-      const d = euclidean(primary.position, t.position);
-      const fraction = d <= 1 ? 1.0 : d <= 5 ? 0.5 : 0;
-      if (fraction === 0) continue;
-      const actual = Math.min(damage * fraction, t.hp);
+
+      // Vector from primary impact to candidate troop
+      const vx = t.position.x - primary.position.x;
+      const vy = t.position.y - primary.position.y;
+
+      // Forward projection along shot axis (positive = behind impact)
+      const fwd = vx * nx + vy * ny;
+      if (fwd <= 0 || fwd > 5) continue;
+
+      // Lateral (perpendicular) distance from cone axis
+      const perpSq = Math.max(0, vx * vx + vy * vy - fwd * fwd);
+      const perp   = Math.sqrt(perpSq);
+
+      // Cone half-width grows from 1 tile (at origin) to 3 tiles (at depth 5)
+      if (perp > 1 + (fwd / 5) * 2) continue;
+
+      const multiplier = Math.max(0.5, 1 - (fwd / 5) * 0.5);
+      const actual = Math.min(damage * multiplier, t.hp);
       t.hp -= actual;
       def.totalDamageDealt += actual;
       if (t.hp <= 0 && t.alive) {
@@ -769,7 +800,7 @@ export function simulateAttack(
 
       const stdDamage = def.dps * def.attackSpeed;
       const splashHits =
-        def.splashType === "scattershot" ? applyScattershotSplash(def, target, stdDamage, simTime) :
+        def.splashType === "scattershot" ? applyScattershotConeSplash(def, target, stdDamage, simTime) :
         def.splashType === "radius"      ? applySplash(def, target, stdDamage, simTime) :
                                            [];
       fireShot(def, target, stdDamage, simTime, splashHits);
