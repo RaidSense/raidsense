@@ -331,9 +331,13 @@ export default function SimulatorPanel() {
   // Projectiles currently in flight at replayTime
   const activeProjectiles = useMemo(() => {
     if (!showReplay || !result?.shots?.length) return undefined;
-    const out: { x: number; y: number; color: string }[] = [];
+    const out: {
+      x: number; y: number;
+      color: string; defenseId: string;
+      progress: number; angle: number;
+    }[] = [];
     for (const shot of result.shots) {
-      if (shot.time > replayTime) break; // shots are chronological
+      if (shot.time > replayTime) break;
       const elapsed = replayTime - shot.time;
       const dx  = shot.troopPos.x - shot.defPos.x;
       const dy  = shot.troopPos.y - shot.defPos.y;
@@ -343,12 +347,41 @@ export default function SimulatorPanel() {
       if (elapsed >= travelTime) continue;
       const t = elapsed / travelTime;
       out.push({
-        x:     (shot.defPos.x  + dx * t) * cellSize,
-        y:     (shot.defPos.y  + dy * t) * cellSize,
-        color: DEFENSE_FILL[shot.defenseId] ?? "#ffffff",
+        x:         (shot.defPos.x  + dx * t) * cellSize,
+        y:         (shot.defPos.y  + dy * t) * cellSize,
+        color:     DEFENSE_FILL[shot.defenseId] ?? "#ffffff",
+        defenseId: shot.defenseId,
+        progress:  t,
+        angle:     Math.atan2(dy, dx) * (180 / Math.PI),
       });
     }
     return out;
+  }, [showReplay, result, replayTime, cellSize]);
+
+  // Impact flashes: ring that expands and fades at the moment a shot lands
+  const FLASH_DURATION = 0.15; // simulation seconds
+  const impactFlashes = useMemo(() => {
+    if (!showReplay || !result?.shots?.length) return undefined;
+    const out: { x: number; y: number; color: string; defenseId: string; alpha: number }[] = [];
+    for (const shot of result.shots) {
+      if (shot.time > replayTime) break;
+      const elapsed    = replayTime - shot.time;
+      const dx         = shot.troopPos.x - shot.defPos.x;
+      const dy         = shot.troopPos.y - shot.defPos.y;
+      const dist       = Math.sqrt(dx * dx + dy * dy);
+      if (dist === 0) continue;
+      const travelTime = dist / PROJECTILE_SPEED;
+      const afterImpact = elapsed - travelTime;
+      if (afterImpact < 0 || afterImpact > FLASH_DURATION) continue;
+      out.push({
+        x:         shot.troopPos.x * cellSize,
+        y:         shot.troopPos.y * cellSize,
+        color:     DEFENSE_FILL[shot.defenseId] ?? "#ffffff",
+        defenseId: shot.defenseId,
+        alpha:     1 - afterImpact / FLASH_DURATION,
+      });
+    }
+    return out.length ? out : undefined;
   }, [showReplay, result, replayTime, cellSize]);
 
   // Inferno Tower beams: one entry per target per active Inferno Tower
@@ -649,6 +682,7 @@ export default function SimulatorPanel() {
             replayDots={replayDots}
             replayDestroyedIds={replayDestroyedIds}
             activeProjectiles={activeProjectiles}
+            impactFlashes={impactFlashes}
             infernoBeams={infernoBeams}
             targetLines={targetLines}
             onCellSizeChange={setCellSize}
@@ -800,6 +834,7 @@ function BattleGrid({
   replayDots,
   replayDestroyedIds,
   activeProjectiles,
+  impactFlashes,
   infernoBeams,
   targetLines,
   onMove,
@@ -823,7 +858,8 @@ function BattleGrid({
   onRemove: (instanceId: string) => void;
   replayDots?: ReplayDot[];
   replayDestroyedIds?: Set<string>;
-  activeProjectiles?: { x: number; y: number; color: string }[];
+  activeProjectiles?: { x: number; y: number; color: string; defenseId: string; progress: number; angle: number }[];
+  impactFlashes?:     { x: number; y: number; color: string; defenseId: string; alpha: number }[];
   infernoBeams?: { x1: number; y1: number; x2: number; y2: number; stage: 0|1|2 }[];
   targetLines?:  { x1: number; y1: number; x2: number; y2: number; color: string }[];
   onMove?: (instanceId: string, toX: number, toY: number) => void;
@@ -1244,10 +1280,68 @@ function BattleGrid({
               stroke={color} strokeWidth={sw} strokeOpacity={0.85} strokeLinecap="round" />
           );
         })}
-        {/* Replay: projectiles in flight */}
-        {activeProjectiles?.map((p, i) => (
-          <circle key={i} cx={p.x} cy={p.y} r={2} fill={p.color} opacity={0.9} />
-        ))}
+        {/* Projectiles in flight — shape varies by defense type */}
+        {activeProjectiles?.map((p, i) => {
+          const { x, y, color, defenseId, angle } = p;
+          if (defenseId === "archer-tower" || defenseId === "x-bow") {
+            // Elongated arrow/bolt, rotated along flight direction
+            return (
+              <g key={i} transform={`translate(${x},${y}) rotate(${angle})`}>
+                <ellipse rx={6} ry={1} fill={color} opacity={0.95} />
+                <ellipse rx={2.5} ry={0.5} fill="rgba(255,255,255,0.8)" />
+              </g>
+            );
+          }
+          if (defenseId === "mortar" || defenseId === "scattershot") {
+            // Heavy shell — large circle with glow ring
+            return (
+              <g key={i}>
+                <circle cx={x} cy={y} r={6.5} fill="none" stroke={color} strokeWidth={1} opacity={0.25} />
+                <circle cx={x} cy={y} r={3.5} fill={color} opacity={0.92} />
+              </g>
+            );
+          }
+          if (defenseId === "wizard-tower") {
+            // Glowing orb
+            return (
+              <g key={i}>
+                <circle cx={x} cy={y} r={6} fill={color} opacity={0.15} />
+                <circle cx={x} cy={y} r={3} fill={color} opacity={0.9} />
+                <circle cx={x} cy={y} r={1.3} fill="rgba(255,255,255,0.85)" />
+              </g>
+            );
+          }
+          if (defenseId === "eagle-artillery") {
+            // Large amber shell with bright core
+            return (
+              <g key={i}>
+                <circle cx={x} cy={y} r={7} fill={color} opacity={0.12} />
+                <circle cx={x} cy={y} r={4} fill={color} opacity={0.9} />
+                <circle cx={x} cy={y} r={1.8} fill="rgba(255,255,255,0.75)" />
+              </g>
+            );
+          }
+          // cannon, air-defense, and others — solid ball with white core
+          return (
+            <g key={i}>
+              <circle cx={x} cy={y} r={2.5} fill={color} opacity={0.9} />
+              <circle cx={x} cy={y} r={1} fill="rgba(255,255,255,0.8)" />
+            </g>
+          );
+        })}
+        {/* Impact flashes — expanding ring that fades out at landing */}
+        {impactFlashes?.map((f, i) => {
+          const isSplash = ["mortar","wizard-tower","eagle-artillery","scattershot"].includes(f.defenseId);
+          const maxR  = isSplash ? 14 : 7;
+          const r     = 2 + (1 - f.alpha) * maxR;
+          const sw    = isSplash ? 1.5 : 1;
+          return (
+            <circle key={`flash-${i}`} cx={f.x} cy={f.y} r={r}
+              fill="none" stroke={f.color} strokeWidth={sw}
+              opacity={f.alpha * 0.75}
+            />
+          );
+        })}
         {/* Replay: animated troop dots + HP bars */}
         {replayDots?.map((dot) => {
           const BAR_W   = 14;
