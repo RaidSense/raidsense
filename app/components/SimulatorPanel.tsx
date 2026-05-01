@@ -264,10 +264,11 @@ export default function SimulatorPanel() {
   const [placedTroops,   setPlacedTroops]   = useState<PlacedTroop[]>([]);
 
   // ── Replay state ────────────────────────────────────────────────────────────
-  const [showReplay,    setShowReplay]    = useState<boolean>(false);
-  const [replayPlaying, setReplayPlaying] = useState<boolean>(false);
-  const [replayTime,    setReplayTime]    = useState<number>(0);
-  const [replaySpeed,   setReplaySpeed]   = useState<1 | 2>(1);
+  const [showReplay,      setShowReplay]      = useState<boolean>(false);
+  const [replayPlaying,   setReplayPlaying]   = useState<boolean>(false);
+  const [replayTime,      setReplayTime]      = useState<number>(0);
+  const [replaySpeed,     setReplaySpeed]     = useState<1 | 2>(1);
+  const [hpOnDamageOnly,  setHpOnDamageOnly]  = useState<boolean>(false);
   const rafRef       = useRef<number>(0);
   const lastTsRef    = useRef<number>(0);
   const speedRef     = useRef(replaySpeed);
@@ -688,6 +689,7 @@ export default function SimulatorPanel() {
             onCellSizeChange={setCellSize}
             result={result}
             replayTime={replayTime}
+            hpOnDamageOnly={hpOnDamageOnly}
           />
           <p className="text-xs text-slate-600">
             Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp;
@@ -784,16 +786,28 @@ export default function SimulatorPanel() {
         </button>
       )}
       {result && showReplay && (
-        <ReplayControls
-          durationSeconds={result.durationSeconds}
-          replayTime={replayTime}
-          playing={replayPlaying}
-          speed={replaySpeed}
-          onPlayPause={() => { lastTsRef.current = 0; setReplayPlaying((p) => !p); }}
-          onSpeedToggle={() => setReplaySpeed((s) => (s === 1 ? 2 : 1))}
-          onSeek={(t) => { lastTsRef.current = 0; setReplayTime(t); }}
-          onClose={() => { setShowReplay(false); setReplayPlaying(false); }}
-        />
+        <>
+          <ReplayControls
+            durationSeconds={result.durationSeconds}
+            replayTime={replayTime}
+            playing={replayPlaying}
+            speed={replaySpeed}
+            onPlayPause={() => { lastTsRef.current = 0; setReplayPlaying((p) => !p); }}
+            onSpeedToggle={() => setReplaySpeed((s) => (s === 1 ? 2 : 1))}
+            onSeek={(t) => { lastTsRef.current = 0; setReplayTime(t); }}
+            onClose={() => { setShowReplay(false); setReplayPlaying(false); }}
+          />
+          <button
+            onClick={() => setHpOnDamageOnly((v) => !v)}
+            className={`w-full rounded-xl border py-2 text-xs font-semibold transition-colors ${
+              hpOnDamageOnly
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                : "border-slate-500/40 bg-slate-500/10 text-slate-400 hover:bg-slate-500/20"
+            }`}
+          >
+            {hpOnDamageOnly ? "HP : au contact uniquement" : "HP : toujours visibles"}
+          </button>
+        </>
       )}
 
       {/* Results */}
@@ -852,6 +866,7 @@ function BattleGrid({
   selectedSlotId,
   onPlaceTroop,
   onRemovePlacedTroop,
+  hpOnDamageOnly,
 }: {
   placed: PlacedDefense[];
   onPlace: (x: number, y: number, defenseId: string, level: number) => void;
@@ -877,6 +892,7 @@ function BattleGrid({
   onRemovePlacedTroop?: (instanceId: string) => void;
   result?: import("../../lib/engine/calculator").SimulationResult | null;
   replayTime?: number;
+  hpOnDamageOnly?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell,          setDragCell]          = useState<string | null>(null);
@@ -1365,8 +1381,12 @@ function BattleGrid({
                 {dot.label}
               </text>
               {/* HP bar */}
-              <rect x={barX} y={barY} width={BAR_W} height={BAR_H} rx={1} fill="rgba(0,0,0,0.45)" />
-              <rect x={barX} y={barY} width={BAR_W * dot.hpPct} height={BAR_H} rx={1} fill={hpColor} />
+              {(!hpOnDamageOnly || dot.hpPct < 1) && (
+                <>
+                  <rect x={barX} y={barY} width={BAR_W} height={BAR_H} rx={1} fill="rgba(0,0,0,0.45)" />
+                  <rect x={barX} y={barY} width={BAR_W * dot.hpPct} height={BAR_H} rx={1} fill={hpColor} />
+                </>
+              )}
             </g>
           );
         })}

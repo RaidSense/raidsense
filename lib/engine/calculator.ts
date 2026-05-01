@@ -661,14 +661,24 @@ export function simulateAttack(
 
       // Forward projection along shot axis (positive = behind impact)
       const fwd = vx * nx + vy * ny;
-      if (fwd <= 0 || fwd > 5) continue;
 
       // Lateral (perpendicular) distance from cone axis
-      const perpSq = Math.max(0, vx * vx + vy * vy - fwd * fwd);
-      const perp   = Math.sqrt(perpSq);
+      const perpSq  = Math.max(0, vx * vx + vy * vy - fwd * fwd);
+      const perp     = Math.sqrt(perpSq);
 
       // Cone half-width grows from 1 tile (at origin) to 3 tiles (at depth 5)
-      if (perp > 1 + (fwd / 5) * 2) continue;
+      const halfWidth = 1 + (fwd / 5) * 2;
+
+      if (DEBUG) console.log("[SCATTER CHECK]", {
+        troop:     id,
+        fwd:       +fwd.toFixed(3),
+        perp:      +perp.toFixed(3),
+        halfWidth: +halfWidth.toFixed(3),
+        hit:       fwd > 0 && fwd <= 5 && perp <= halfWidth,
+      });
+
+      if (fwd <= 0 || fwd > 5) continue;
+      if (perp > halfWidth) continue;
 
       const multiplier = Math.max(0.5, 1 - (fwd / 5) * 0.5);
       const actual = Math.min(damage * multiplier, t.hp);
