@@ -297,10 +297,11 @@ export default function SimulatorPanel() {
     return () => cancelAnimationFrame(rafRef.current);
   }, [replayPlaying]);
 
-  // Troop dots interpolated at current replay time
-  // HP computed from projectile impact times — instant drop at the moment of hit.
+  // Troop dots: position interpolated continuously; HP updated every 0.1 s (tick resolution).
   const replayDots = useMemo(() => {
     if (!showReplay || !result || !meta.length) return undefined;
+    // Quantise to simulation tick (0.1 s) so HP changes are discrete, not gradual.
+    const tickTime = Math.floor(replayTime * 10) / 10;
     return meta.flatMap((m) => {
       const tr = result.troops[m.instanceId];
       if (!tr) return [];
@@ -308,31 +309,33 @@ export default function SimulatorPanel() {
       if (!pos) return [];
       let hp = m.maxHp;
       for (const shot of result.shots) {
-        if (shot.time > replayTime) break;
+        if (shot.time > tickTime) break;
+        const dx          = shot.troopPos.x - shot.defPos.x;
+        const dy          = shot.troopPos.y - shot.defPos.y;
+        const impactTime  = shot.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
+        if (impactTime > tickTime) continue;
         // Primary hit
         if (shot.targetInstId === m.instanceId) {
-          const dx = shot.troopPos.x - shot.defPos.x;
-          const dy = shot.troopPos.y - shot.defPos.y;
-          const impactTime = shot.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
-          if (impactTime <= replayTime) hp -= shot.damage;
+          hp -= shot.damage;
         }
-        // Residual projectiles (scattershot cone)
+        // Splash hit (mortar, wizard-tower, eagle-artillery, scattershot primary zone…)
+        else if (shot.hitTargets.includes(m.instanceId)) {
+          hp -= shot.damage;
+        }
+        // Scattershot residual cone (own travel time from impact point)
         if (shot.residualProjectiles) {
           for (const rp of shot.residualProjectiles) {
             if (rp.targetInstId !== m.instanceId) continue;
-            const pdx = shot.troopPos.x - shot.defPos.x;
-            const pdy = shot.troopPos.y - shot.defPos.y;
-            const primaryImpact = shot.time + Math.sqrt(pdx * pdx + pdy * pdy) / PROJECTILE_SPEED;
             const rdx = rp.to.x - rp.from.x;
             const rdy = rp.to.y - rp.from.y;
-            const impactTime = primaryImpact + Math.sqrt(rdx * rdx + rdy * rdy) / PROJECTILE_SPEED;
-            if (impactTime <= replayTime) hp -= rp.damage;
+            const rpImpact = impactTime + Math.sqrt(rdx * rdx + rdy * rdy) / PROJECTILE_SPEED;
+            if (rpImpact <= tickTime) hp -= rp.damage;
           }
         }
       }
-      // Add healing (discrete, at the exact tick it was applied)
+      // Healing — applied at the exact tick it occurred in the simulation
       for (const ev of result.healEvents ?? []) {
-        if (ev.time > replayTime) break;
+        if (ev.time > tickTime) break;
         if (ev.targetInstId === m.instanceId) hp = Math.min(hp + ev.amount, m.maxHp);
       }
       const hpPct = m.maxHp > 0 ? Math.max(0, Math.min(1, hp / m.maxHp)) : 0;
