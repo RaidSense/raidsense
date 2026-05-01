@@ -622,17 +622,15 @@ export function simulateAttack(
   }
 
   /**
-   * Scattershot directional cone splash.
+   * Scattershot two-zone radial splash.
    *
-   * Origin  : primary target position.
-   * Axis    : normalised vector from defender → primary, then extended behind.
+   * Troops within 5 tiles of the primary impact point are hit:
+   *   Near zone (dist ≤ 1 tile) : 100 % damage
+   *   Far  zone (1 < dist ≤ 5)  :  50 % damage
    *
-   * A troop is inside the cone when:
-   *   forwardDistance  ∈ (0, 5]            (strictly behind impact, max 5 tiles)
-   *   lateralDistance  ≤ 1 + (fwd/5) * 2   (half-width: 1 tile at origin → 3 at depth 5)
-   *
-   * Damage multiplier = clamp(1 − (fwd/5) * 0.5 ,  0.5, 1.0)
-   *   → 100 % at depth 0,  50 % at depth 5.
+   * A directional cone was tried but failed because all troops converge
+   * to the same attack-range stopping point (fwd ≈ 0 for every troop),
+   * so a radius check is the only model that works here.
    *
    * Primary target is never hit twice (excluded by instanceId check).
    */
@@ -642,45 +640,24 @@ export function simulateAttack(
     damage:  number,
     simTime: number,
   ): { id: string; damage: number; position: Vec2 }[] {
-    // Normalised direction: defender → primary target
-    const rawDx = primary.position.x - def.position.x;
-    const rawDy = primary.position.y - def.position.y;
-    const rawLen = Math.sqrt(rawDx * rawDx + rawDy * rawDy);
-    if (rawLen === 0) return [];
-    const nx = rawDx / rawLen;
-    const ny = rawDy / rawLen;
-
     const hit: { id: string; damage: number; position: Vec2 }[] = [];
     for (const [id, t] of troops) {
       if (!t.alive || !t.isActive || id === primary.instanceId) continue;
       if (!defenseCanTarget(def.targetType, t.isAirUnit)) continue;
 
-      // Vector from primary impact to candidate troop
-      const vx = t.position.x - primary.position.x;
-      const vy = t.position.y - primary.position.y;
-
-      // Forward projection along shot axis (positive = behind impact)
-      const fwd = vx * nx + vy * ny;
-
-      // Lateral (perpendicular) distance from cone axis
-      const perpSq  = Math.max(0, vx * vx + vy * vy - fwd * fwd);
-      const perp     = Math.sqrt(perpSq);
-
-      // Cone half-width grows from 1 tile (at origin) to 3 tiles (at depth 5)
-      const halfWidth = 1 + (fwd / 5) * 2;
+      const dist = euclidean(primary.position, t.position);
+      const zone = dist <= 1 ? "near" : dist <= 5 ? "far" : "miss";
 
       if (DEBUG) console.log("[SCATTER CHECK]", {
-        troop:     id,
-        fwd:       +fwd.toFixed(3),
-        perp:      +perp.toFixed(3),
-        halfWidth: +halfWidth.toFixed(3),
-        hit:       fwd > 0 && fwd <= 5 && perp <= halfWidth,
+        troop: id,
+        dist:  +dist.toFixed(3),
+        zone,
+        hit:   dist <= 5,
       });
 
-      if (fwd <= 0 || fwd > 5) continue;
-      if (perp > halfWidth) continue;
+      if (dist > 5) continue;
 
-      const multiplier = Math.max(0.5, 1 - (fwd / 5) * 0.5);
+      const multiplier = dist <= 1 ? 1.0 : 0.5;
       const actual = Math.min(damage * multiplier, t.hp);
       t.hp -= actual;
       def.totalDamageDealt += actual;
