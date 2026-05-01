@@ -213,7 +213,8 @@ interface DefenseState {
   hp:                 number;
   dps:                number;
   size:               number;   // footprint side length in tiles
-  splashRadius:       number;   // 0 = single target
+  splashRadius:       number;   // used when splashType === "radius"
+  splashType:         "radius" | "scattershot" | "none";
   minRange:           number;
   maxRange:           number;
   targetType:         TargetType;
@@ -399,6 +400,7 @@ export function simulateAttack(
       hpHistory:          [],
       attackSpeed:        defData.attackSpeed,
       splashRadius:       defData.splashRadius ?? 0,
+      splashType:         defData.splashType ?? "none",
       attackCooldown:     DISCRETE_DEFENSE_IDS.has(pl.defenseId) ? defData.attackSpeed : 0,
       isDiscrete:         DISCRETE_DEFENSE_IDS.has(pl.defenseId),
       burstRemaining:     isEagle ? EAGLE_BURST_SIZE : -1,
@@ -603,6 +605,38 @@ export function simulateAttack(
     return hit;
   }
 
+  /**
+   * Scattershot V1 — zoned falloff around the primary impact point.
+   *  ≤ 1 tile  → 100% of shot damage
+   *  1–5 tiles → 50%  of shot damage
+   * Isolated here for future directional refinement (trajectory-based rear arc).
+   */
+  function applyScattershotSplash(
+    def:     DefenseState,
+    primary: TroopState,
+    damage:  number,
+    simTime: number,
+  ): string[] {
+    const hit: string[] = [];
+    for (const [id, t] of troops) {
+      if (!t.alive || !t.isActive || id === primary.instanceId) continue;
+      if (!defenseCanTarget(def.targetType, t.isAirUnit)) continue;
+      const d = euclidean(primary.position, t.position);
+      const fraction = d <= 1 ? 1.0 : d <= 5 ? 0.5 : 0;
+      if (fraction === 0) continue;
+      const actual = Math.min(damage * fraction, t.hp);
+      t.hp -= actual;
+      def.totalDamageDealt += actual;
+      if (t.hp <= 0 && t.alive) {
+        t.hp = 0;
+        t.alive = false;
+        t.destroyedAt = simTime;
+      }
+      hit.push(id);
+    }
+    return hit;
+  }
+
   /** Returns the N closest alive troops in range for multi-target defenses. */
   function findNearestTroops(def: DefenseState, maxCount: number): TroopState[] {
     const candidates: { dist: number; t: TroopState }[] = [];
@@ -733,8 +767,12 @@ export function simulateAttack(
         continue;
       }
 
-      const splashHits = applySplash(def, target, def.dps * def.attackSpeed, simTime);
-      fireShot(def, target, def.dps * def.attackSpeed, simTime, splashHits);
+      const stdDamage = def.dps * def.attackSpeed;
+      const splashHits =
+        def.splashType === "scattershot" ? applyScattershotSplash(def, target, stdDamage, simTime) :
+        def.splashType === "radius"      ? applySplash(def, target, stdDamage, simTime) :
+                                           [];
+      fireShot(def, target, stdDamage, simTime, splashHits);
       def.attackCooldown = def.attackSpeed;
     }
 

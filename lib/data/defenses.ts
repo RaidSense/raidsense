@@ -24,8 +24,15 @@ export interface Defense {
   size: number;
   /** Seconds between attacks. */
   attackSpeed: number;
-  /** Splash radius in tiles (0 = single target). */
+  /** Splash radius in tiles — used when splashType is "radius". */
   splashRadius?: number;
+  /**
+   * How the splash zone is resolved after hitting the primary target.
+   * "radius"      — circular zone of `splashRadius` tiles (mortar, wizard-tower, eagle-artillery).
+   * "scattershot" — zoned falloff behind the primary target (see applyScattershotSplash).
+   * Omitted       — no splash.
+   */
+  splashType?: "radius" | "scattershot";
   /** Non-obvious mechanics: modes, splash radius, activation conditions, etc. */
   notes?: string;
   levels: DefenseLevel[];
@@ -98,6 +105,7 @@ export const DEFENSES: Defense[] = [
     size: 3,
     attackSpeed: 5,
     splashRadius: 1.5,
+    splashType: "radius",
     notes: "Splash weapon (radius 1.5 tiles). Min range 4 — cannot target nearby units. DPS is low because damage is delivered as heavy area-splash per slow shot.",
     levels: [
       { level: 1,  hp: 400,  dps: 4,  minRange: 4, maxRange: 11, townHallRequired: 3  },
@@ -145,6 +153,7 @@ export const DEFENSES: Defense[] = [
     size: 3,
     attackSpeed: 1,
     splashRadius: 1.5,
+    splashType: "radius",
     notes: "Splash weapon (radius 1.5 tiles). Hits all units within splash radius around the targeted unit.",
     levels: [
       { level: 1,  hp: 620,  dps: 11,  minRange: 0, maxRange: 7, townHallRequired: 5  },
@@ -215,6 +224,7 @@ export const DEFENSES: Defense[] = [
     size: 4,
     attackSpeed: 1,
     splashRadius: 3,
+    splashType: "radius",
     notes: "Fires a burst of 3 shells with area splash. Inactive until 150 housing spaces of troops have been deployed. Min range 7 — cannot hit nearby units.",
     levels: [
       { level: 1, hp: 4000,  dps: 112, minRange: 7, maxRange: 50, townHallRequired: 11 },
@@ -232,7 +242,8 @@ export const DEFENSES: Defense[] = [
     targetType: "Ground & Air",
     size: 3,
     attackSpeed: 3.2,
-    notes: "Fires a burst of 3 bouncing boulders with area splash. Range 3–10 tiles.",
+    splashType: "scattershot",
+    notes: "Area-splash weapon. Near zone (≤1 tile from primary): 100% damage. Far zone (1–5 tiles): 50% damage. Range 3–10 tiles.",
     levels: [
       { level: 1, hp: 3000, dps: 90,  minRange: 3, maxRange: 10, townHallRequired: 13 },
       { level: 2, hp: 3600, dps: 108, minRange: 3, maxRange: 10, townHallRequired: 13 },
