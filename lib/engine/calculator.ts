@@ -52,7 +52,7 @@ const TROOP_ATTACK_RANGE: Record<string, number> = {
   "balloon":        2.0,
   "wizard":         3.0,
   "healer":         5.0,
-  "dragon":         2.25,
+  "dragon":         3,
   "pekka":          0.8,
   "baby-dragon":    2.0,
   "miner":          0.5,
@@ -200,6 +200,7 @@ interface TroopState {
   attackRange:    number;
   attackSpeed:    number;
   attackCooldown: number;
+  splashRadius:   number;
   position: Vec2;
   isAirUnit: boolean;
   preferredTarget: string;
@@ -354,6 +355,7 @@ export function simulateAttack(
       attackRange:    TROOP_ATTACK_RANGE[dep.troopId] ?? 0.5,
       attackSpeed:    troopData.attackSpeed,
       attackCooldown: troopData.attackSpeed,
+      splashRadius:   troopData.splashRadius ?? 0,
       position: { ...dep.dropPosition },
       isAirUnit,
       preferredTarget: troopData.preferredTarget,
@@ -872,6 +874,23 @@ export function simulateAttack(
             targetEntity.hp = 0;
             targetEntity.alive = false;
             targetEntity.destroyedAt = simTime;
+          }
+          if (troop.splashRadius > 0) {
+            for (const [id, entity] of [
+              ...[...defenses.entries()],
+              ...[...buildings.entries()],
+            ] as [string, DefenseState | BuildingState][]) {
+              if (!entity.alive || id === troop.targetId) continue;
+              if (euclidean(targetEntity.position, entity.position) <= troop.splashRadius) {
+                const splashActual = Math.min(damage, entity.hp);
+                entity.hp -= splashActual;
+                if (entity.hp <= 0 && entity.alive) {
+                  entity.hp = 0;
+                  entity.alive = false;
+                  entity.destroyedAt = simTime;
+                }
+              }
+            }
           }
           troop.attackCooldown = troop.attackSpeed;
         }

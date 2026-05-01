@@ -16,6 +16,8 @@ export interface Troop {
   preferredTarget: PreferredTarget;
   /** Seconds between attacks. */
   attackSpeed: number;
+  /** Splash radius in tiles around the primary target (0 = single-target). */
+  splashRadius?: number;
   levels: TroopLevel[];
 }
 
@@ -206,7 +208,8 @@ export const TROOPS: Troop[] = [
     movementSpeed: 20,
     attackType: "Ground & Air",
     preferredTarget: "None",
-    attackSpeed: 2.0,
+    attackSpeed: 1.25,
+    splashRadius: 0.3,
     levels: [
       { level: 1, hp: 1900,  dps: 100, townHallRequired: 7 },
       { level: 2, hp: 2280,  dps: 120, townHallRequired: 7 },
