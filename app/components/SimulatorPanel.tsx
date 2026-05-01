@@ -308,11 +308,26 @@ export default function SimulatorPanel() {
       let hp = m.maxHp;
       for (const shot of result.shots) {
         if (shot.time > replayTime) break;
-        if (shot.targetInstId !== m.instanceId) continue;
-        const dx = shot.troopPos.x - shot.defPos.x;
-        const dy = shot.troopPos.y - shot.defPos.y;
-        const impactTime = shot.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
-        if (impactTime <= replayTime) hp -= shot.damage;
+        // Primary hit
+        if (shot.targetInstId === m.instanceId) {
+          const dx = shot.troopPos.x - shot.defPos.x;
+          const dy = shot.troopPos.y - shot.defPos.y;
+          const impactTime = shot.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
+          if (impactTime <= replayTime) hp -= shot.damage;
+        }
+        // Cone/splash residual hits (scattershot)
+        if (shot.residualProjectiles) {
+          for (const rp of shot.residualProjectiles) {
+            if (rp.targetInstId !== m.instanceId) continue;
+            const pdx = shot.troopPos.x - shot.defPos.x;
+            const pdy = shot.troopPos.y - shot.defPos.y;
+            const primaryImpact = shot.time + Math.sqrt(pdx * pdx + pdy * pdy) / PROJECTILE_SPEED;
+            const rdx = rp.to.x - rp.from.x;
+            const rdy = rp.to.y - rp.from.y;
+            const impactTime = primaryImpact + Math.sqrt(rdx * rdx + rdy * rdy) / PROJECTILE_SPEED;
+            if (impactTime <= replayTime) hp -= rp.damage;
+          }
+        }
       }
       const hpPct = m.maxHp > 0 ? Math.max(0, Math.min(1, hp / m.maxHp)) : 0;
       return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label, hpPct }];
