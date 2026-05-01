@@ -152,6 +152,12 @@ export interface ShotEvent {
   damage:       number;
   /** All troop instance ids hit by this shot (primary first, then splash). */
   hitTargets:   string[];
+  /**
+   * Scattershot only: one entry per troop hit by the directional cone.
+   * from = primary impact position, to = cone-hit troop position (both tile-centred).
+   * Undefined for all other defense types.
+   */
+  residualProjectiles?: { from: Vec2; to: Vec2; targetInstId: string; damage: number }[];
   /** Defense centre in tile coords. Pixel = pos * cellPx. */
   defPos:       Vec2;
   /**
@@ -549,6 +555,7 @@ export function simulateAttack(
     damage:    number,
     simTime:   number,
     extraHits: string[] = [],
+    coneHits?: { id: string; damage: number; position: Vec2 }[],
   ): void {
     const actual = Math.min(damage, target.hp);
     target.hp            -= actual;
@@ -558,6 +565,7 @@ export function simulateAttack(
       target.alive       = false;
       target.destroyedAt = simTime;
     }
+    const impactPos: Vec2 = { x: target.position.x + 0.5, y: target.position.y + 0.5 };
     shots.push({
       time:         simTime,
       defenseId:    def.defenseId,
@@ -566,7 +574,15 @@ export function simulateAttack(
       damage:       actual,
       hitTargets:   [target.instanceId, ...extraHits],
       defPos:       { ...def.position },
-      troopPos:     { x: target.position.x + 0.5, y: target.position.y + 0.5 },
+      troopPos:     impactPos,
+      ...(coneHits?.length ? {
+        residualProjectiles: coneHits.map((h) => ({
+          from:         impactPos,
+          to:           { x: h.position.x + 0.5, y: h.position.y + 0.5 },
+          targetInstId: h.id,
+          damage:       h.damage,
+        })),
+      } : {}),
     });
     if (DEBUG) {
       const splashInfo = extraHits.length ? ` [splash×${extraHits.length}: ${extraHits.join(",")}]` : "";
@@ -625,7 +641,7 @@ export function simulateAttack(
     primary: TroopState,
     damage:  number,
     simTime: number,
-  ): string[] {
+  ): { id: string; damage: number; position: Vec2 }[] {
     // Normalised direction: defender → primary target
     const rawDx = primary.position.x - def.position.x;
     const rawDy = primary.position.y - def.position.y;
@@ -634,7 +650,7 @@ export function simulateAttack(
     const nx = rawDx / rawLen;
     const ny = rawDy / rawLen;
 
-    const hit: string[] = [];
+    const hit: { id: string; damage: number; position: Vec2 }[] = [];
     for (const [id, t] of troops) {
       if (!t.alive || !t.isActive || id === primary.instanceId) continue;
       if (!defenseCanTarget(def.targetType, t.isAirUnit)) continue;
@@ -663,7 +679,7 @@ export function simulateAttack(
         t.alive = false;
         t.destroyedAt = simTime;
       }
-      hit.push(id);
+      hit.push({ id, damage: actual, position: { ...t.position } });
     }
     return hit;
   }
@@ -672,7 +688,7 @@ export function simulateAttack(
   function findNearestTroops(def: DefenseState, maxCount: number): TroopState[] {
     const candidates: { dist: number; t: TroopState }[] = [];
     for (const troop of troops.values()) {
-      if (!troop.alive) continue;
+      if (!troop.alive || !troop.isActive) continue;
       if (!defenseCanTarget(def.targetType, troop.isAirUnit)) continue;
       const d = euclidean(def.position, troop.position);
       if (d >= def.minRange && d <= def.maxRange) candidates.push({ dist: d, t: troop });
@@ -799,11 +815,15 @@ export function simulateAttack(
       }
 
       const stdDamage = def.dps * def.attackSpeed;
-      const splashHits =
-        def.splashType === "scattershot" ? applyScattershotConeSplash(def, target, stdDamage, simTime) :
-        def.splashType === "radius"      ? applySplash(def, target, stdDamage, simTime) :
-                                           [];
-      fireShot(def, target, stdDamage, simTime, splashHits);
+      if (def.splashType === "scattershot") {
+        const coneHits = applyScattershotConeSplash(def, target, stdDamage, simTime);
+        fireShot(def, target, stdDamage, simTime, coneHits.map((h) => h.id), coneHits);
+      } else {
+        const splashHits = def.splashType === "radius"
+          ? applySplash(def, target, stdDamage, simTime)
+          : [];
+        fireShot(def, target, stdDamage, simTime, splashHits);
+      }
       def.attackCooldown = def.attackSpeed;
     }
 
