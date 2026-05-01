@@ -11,6 +11,7 @@ import type {
   DefensePlacement,
   BuildingPlacement,
   Vec2,
+  HealEvent,
 } from "../../lib/engine/calculator";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -343,6 +344,51 @@ export default function SimulatorPanel() {
     }
     return ids;
   }, [showReplay, result, replayTime]);
+
+  // Heal orbs in flight at replayTime
+  const activeHealOrbs = useMemo(() => {
+    if (!showReplay || !result?.heals?.length) return undefined;
+    const out: { x: number; y: number }[] = [];
+    for (const heal of result.heals) {
+      if (heal.time > replayTime) break;
+      const elapsed = replayTime - heal.time;
+      const dx = heal.targetPos.x - heal.healerPos.x;
+      const dy = heal.targetPos.y - heal.healerPos.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist === 0) continue;
+      const travelTime = dist / PROJECTILE_SPEED;
+      if (elapsed >= travelTime) continue;
+      const t = elapsed / travelTime;
+      out.push({
+        x: (heal.healerPos.x + dx * t) * cellSize,
+        y: (heal.healerPos.y + dy * t) * cellSize,
+      });
+    }
+    return out.length ? out : undefined;
+  }, [showReplay, result, replayTime, cellSize]);
+
+  // Heal halos: expanding green ring at target position after orb impact
+  const HEAL_HALO_DURATION = 0.35;
+  const healHalos = useMemo(() => {
+    if (!showReplay || !result?.heals?.length) return undefined;
+    const out: { x: number; y: number; alpha: number }[] = [];
+    for (const heal of result.heals) {
+      if (heal.time > replayTime) break;
+      const elapsed = replayTime - heal.time;
+      const dx = heal.targetPos.x - heal.healerPos.x;
+      const dy = heal.targetPos.y - heal.healerPos.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist === 0) continue;
+      const afterImpact = elapsed - dist / PROJECTILE_SPEED;
+      if (afterImpact < 0 || afterImpact > HEAL_HALO_DURATION) continue;
+      out.push({
+        x:     heal.targetPos.x * cellSize,
+        y:     heal.targetPos.y * cellSize,
+        alpha: 1 - afterImpact / HEAL_HALO_DURATION,
+      });
+    }
+    return out.length ? out : undefined;
+  }, [showReplay, result, replayTime, cellSize]);
 
   // Projectiles currently in flight at replayTime
   const activeProjectiles = useMemo(() => {
@@ -700,6 +746,8 @@ export default function SimulatorPanel() {
             activeProjectiles={activeProjectiles}
             impactFlashes={impactFlashes}
             infernoBeams={infernoBeams}
+            activeHealOrbs={activeHealOrbs}
+            healHalos={healHalos}
             targetLines={targetLines}
             onCellSizeChange={setCellSize}
             result={result}
@@ -865,6 +913,8 @@ function BattleGrid({
   activeProjectiles,
   impactFlashes,
   infernoBeams,
+  activeHealOrbs,
+  healHalos,
   targetLines,
   onMove,
   onModeToggle,
@@ -890,7 +940,9 @@ function BattleGrid({
   replayDestroyedIds?: Set<string>;
   activeProjectiles?: { x: number; y: number; color: string; defenseId: string; progress: number; angle: number }[];
   impactFlashes?:     { x: number; y: number; color: string; defenseId: string; alpha: number }[];
-  infernoBeams?: { x1: number; y1: number; x2: number; y2: number; stage: 0|1|2 }[];
+  infernoBeams?:      { x1: number; y1: number; x2: number; y2: number; stage: 0|1|2 }[];
+  activeHealOrbs?:    { x: number; y: number }[];
+  healHalos?:         { x: number; y: number; alpha: number }[];
   targetLines?:  { x1: number; y1: number; x2: number; y2: number; color: string }[];
   onMove?: (instanceId: string, toX: number, toY: number) => void;
   onModeToggle?: (instanceId: string) => void;
@@ -1311,6 +1363,15 @@ function BattleGrid({
               stroke={color} strokeWidth={sw} strokeOpacity={0.85} strokeLinecap="round" />
           );
         })}
+        {/* Heal orbs in flight — glowing lime sphere */}
+        {activeHealOrbs?.map((h, i) => (
+          <g key={`heal-orb-${i}`}>
+            <circle cx={h.x} cy={h.y} r={9}   fill="#4ade80" opacity={0.08} />
+            <circle cx={h.x} cy={h.y} r={5}   fill="#4ade80" opacity={0.22} />
+            <circle cx={h.x} cy={h.y} r={3}   fill="#4ade80" opacity={0.90} />
+            <circle cx={h.x} cy={h.y} r={1.2} fill="rgba(255,255,255,0.9)" />
+          </g>
+        ))}
         {/* Projectiles in flight — shape varies by defense type */}
         {activeProjectiles?.map((p, i) => {
           const { x, y, color, defenseId, angle } = p;
@@ -1371,6 +1432,17 @@ function BattleGrid({
               fill="none" stroke={f.color} strokeWidth={sw}
               opacity={f.alpha * 0.75}
             />
+          );
+        })}
+        {/* Heal halos — double expanding ring at impact point */}
+        {healHalos?.map((f, i) => {
+          const rOuter = 4  + (1 - f.alpha) * 20;
+          const rInner = 2  + (1 - f.alpha) * 11;
+          return (
+            <g key={`heal-halo-${i}`}>
+              <circle cx={f.x} cy={f.y} r={rOuter} fill="none" stroke="#4ade80" strokeWidth={1.5} opacity={f.alpha * 0.45} />
+              <circle cx={f.x} cy={f.y} r={rInner} fill="none" stroke="#86efac" strokeWidth={2}   opacity={f.alpha * 0.70} />
+            </g>
           );
         })}
         {/* Replay: animated troop dots + HP bars */}

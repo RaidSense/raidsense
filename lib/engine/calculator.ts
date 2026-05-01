@@ -141,6 +141,21 @@ export interface BuildingResult {
   destroyedAt: number | null;
 }
 
+/** One heal pulse emitted by a Healer. Used to animate orbs in replay. */
+export interface HealEvent {
+  /** Simulation time (s) when the orb is fired. */
+  time:          number;
+  healerInstId:  string;
+  /** Healer centre position (tile + 0.5 offset). */
+  healerPos:     Vec2;
+  /** Primary heal target instance id. */
+  targetInstId:  string;
+  /** Primary target centre position (tile + 0.5 offset). */
+  targetPos:     Vec2;
+  /** All troop instance ids healed by this pulse (primary + splash). */
+  healedTargets: string[];
+}
+
 /** One projectile fired during the simulation. Used to animate shots in replay. */
 export interface ShotEvent {
   /** Simulation time (s) when the shot was fired. */
@@ -187,6 +202,7 @@ export interface SimulationResult {
   buildings: Record<string, BuildingResult>;
   durationSeconds: number;
   shots: ShotEvent[];
+  heals: HealEvent[];
   targetChanges: TargetChangeEvent[];
 }
 
@@ -204,8 +220,9 @@ interface TroopState {
   attackSpeed:    number;
   attackCooldown: number;
   splashRadius:   number;
-  hps:            number;   // heal per second (0 for non-healers)
-  maxHp:          number;   // initial HP cap, used to clamp healing
+  hps:                 number;   // heal per second (0 for non-healers)
+  maxHp:               number;   // initial HP cap, used to clamp healing
+  healVisualCooldown:  number;   // counts down; emits HealEvent when ≤ 0
   position: Vec2;
   isAirUnit: boolean;
   preferredTarget: string;
@@ -361,8 +378,9 @@ export function simulateAttack(
       attackSpeed:    troopData.attackSpeed,
       attackCooldown: troopData.attackSpeed,
       splashRadius:   troopData.splashRadius ?? 0,
-      hps:            levelData.hps ?? 0,
-      maxHp:          levelData.hp,
+      hps:                levelData.hps ?? 0,
+      maxHp:              levelData.hp,
+      healVisualCooldown: 0,
       position: { ...dep.dropPosition },
       isAirUnit,
       preferredTarget: troopData.preferredTarget,
@@ -556,6 +574,7 @@ export function simulateAttack(
   // -------------------------------------------------------------------------
 
   const shots:         ShotEvent[]         = [];
+  const heals:         HealEvent[]         = [];
   const targetChanges: TargetChangeEvent[] = [];
 
   function fireShot(
@@ -880,6 +899,22 @@ export function simulateAttack(
               t.hp = Math.min(t.hp + healPerTick, t.maxHp);
             }
           }
+          // Pulse visuel (une fois par attackSpeed)
+          troop.healVisualCooldown -= TICK;
+          if (troop.healVisualCooldown <= 0) {
+            heals.push({
+              time:          simTime,
+              healerInstId:  troop.instanceId,
+              healerPos:     { x: troop.position.x + 0.5, y: troop.position.y + 0.5 },
+              targetInstId:  resolvedTargetId,
+              targetPos:     { x: healTarget.position.x + 0.5, y: healTarget.position.y + 0.5 },
+              healedTargets: [...troops.values()]
+                .filter((t) => t.alive && t.isActive && t.hps === 0 &&
+                               euclidean(healTarget.position, t.position) <= HEALER_SPLASH_RADIUS)
+                .map((t) => t.instanceId),
+            });
+            troop.healVisualCooldown = troop.attackSpeed;
+          }
         } else {
           troop.position = stepToward(troop.position, healTarget.position, troop.speed * TICK);
         }
@@ -1023,6 +1058,7 @@ export function simulateAttack(
     buildings: buildingResults,
     durationSeconds: Math.round(lastSimTime * 10) / 10,
     shots,
+    heals,
     targetChanges,
   };
 }
