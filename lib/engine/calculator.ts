@@ -150,6 +150,8 @@ export interface ShotEvent {
   targetInstId: string;
   /** Actual damage dealt (capped at target remaining HP). */
   damage:       number;
+  /** All troop instance ids hit by this shot (primary first, then splash). */
+  hitTargets:   string[];
   /** Defense centre in tile coords. Pixel = pos * cellPx. */
   defPos:       Vec2;
   /**
@@ -189,7 +191,9 @@ interface TroopState {
   hp: number;
   dps: number;
   speed: number;
-  attackRange: number;
+  attackRange:    number;
+  attackSpeed:    number;
+  attackCooldown: number;
   position: Vec2;
   isAirUnit: boolean;
   preferredTarget: string;
@@ -209,6 +213,7 @@ interface DefenseState {
   hp:                 number;
   dps:                number;
   size:               number;   // footprint side length in tiles
+  splashRadius:       number;   // 0 = single target
   minRange:           number;
   maxRange:           number;
   targetType:         TargetType;
@@ -291,8 +296,8 @@ function defenseCanTarget(targetType: TargetType, isAirUnit: boolean): boolean {
  *  - Healer healing is not applied (she moves but deals 0 DPS, as per data).
  *  - Inferno Tower single-target ramp-up is modelled (3-tier DPS: init/mid/max).
  *  - Eagle Artillery activation threshold is not enforced.
- *  - Splash radius is not applied; each troop / defense deals its DPS to a
- *    single target per tick.
+ *  - Splash damage is applied for mortar, wizard-tower, and eagle-artillery.
+ *  - Troops attack in discrete hits (attackSpeed-based, not continuous DPS).
  *  - Neutral buildings (non-attacking destructibles) are tracked alongside
  *    defenses and are valid troop targets.
  */
@@ -338,8 +343,10 @@ export function simulateAttack(
       troopId: dep.troopId,
       hp: levelData.hp,
       dps: levelData.dps,
-      speed: troopData.movementSpeed / SPEED_DIVISOR,
-      attackRange: TROOP_ATTACK_RANGE[dep.troopId] ?? 0.5,
+      speed:          troopData.movementSpeed / SPEED_DIVISOR,
+      attackRange:    TROOP_ATTACK_RANGE[dep.troopId] ?? 0.5,
+      attackSpeed:    troopData.attackSpeed,
+      attackCooldown: troopData.attackSpeed,
       position: { ...dep.dropPosition },
       isAirUnit,
       preferredTarget: troopData.preferredTarget,
@@ -391,6 +398,7 @@ export function simulateAttack(
       totalDamageDealt:   0,
       hpHistory:          [],
       attackSpeed:        defData.attackSpeed,
+      splashRadius:       defData.splashRadius ?? 0,
       attackCooldown:     DISCRETE_DEFENSE_IDS.has(pl.defenseId) ? defData.attackSpeed : 0,
       isDiscrete:         DISCRETE_DEFENSE_IDS.has(pl.defenseId),
       burstRemaining:     isEagle ? EAGLE_BURST_SIZE : -1,
@@ -534,10 +542,11 @@ export function simulateAttack(
   const targetChanges: TargetChangeEvent[] = [];
 
   function fireShot(
-    def:     DefenseState,
-    target:  TroopState,
-    damage:  number,
-    simTime: number,
+    def:       DefenseState,
+    target:    TroopState,
+    damage:    number,
+    simTime:   number,
+    extraHits: string[] = [],
   ): void {
     const actual = Math.min(damage, target.hp);
     target.hp            -= actual;
@@ -553,12 +562,45 @@ export function simulateAttack(
       defInstId:    def.instanceId,
       targetInstId: target.instanceId,
       damage:       actual,
+      hitTargets:   [target.instanceId, ...extraHits],
       defPos:       { ...def.position },
       troopPos:     { x: target.position.x + 0.5, y: target.position.y + 0.5 },
     });
     if (DEBUG) {
-      console.log(`[DEBUG t=${simTime.toFixed(2)}s] TIR ${def.defenseId}(${def.instanceId}) → ${target.instanceId} | dégâts=${actual.toFixed(0)}`);
+      const splashInfo = extraHits.length ? ` [splash×${extraHits.length}: ${extraHits.join(",")}]` : "";
+      console.log(`[DEBUG t=${simTime.toFixed(2)}s] TIR ${def.defenseId}(${def.instanceId}) → ${target.instanceId} | dégâts=${actual.toFixed(0)}${splashInfo}`);
     }
+  }
+
+  /**
+   * Applies `damage` to every alive, active troop within `def.splashRadius` tiles
+   * of `primary`'s position (excluding the primary itself).
+   * Returns the list of hit troop instance ids.
+   */
+  function applySplash(
+    def:     DefenseState,
+    primary: TroopState,
+    damage:  number,
+    simTime: number,
+  ): string[] {
+    if (def.splashRadius <= 0) return [];
+    const hit: string[] = [];
+    for (const [id, t] of troops) {
+      if (!t.alive || !t.isActive || id === primary.instanceId) continue;
+      if (!defenseCanTarget(def.targetType, t.isAirUnit)) continue;
+      if (euclidean(primary.position, t.position) <= def.splashRadius) {
+        const actual = Math.min(damage, t.hp);
+        t.hp -= actual;
+        def.totalDamageDealt += actual;
+        if (t.hp <= 0 && t.alive) {
+          t.hp = 0;
+          t.alive = false;
+          t.destroyedAt = simTime;
+        }
+        hit.push(id);
+      }
+    }
+    return hit;
   }
 
   /** Returns the N closest alive troops in range for multi-target defenses. */
@@ -636,7 +678,8 @@ export function simulateAttack(
         if (def.attackCooldown > 0) continue;
 
         const dpa = def.dps * EAGLE_BURST_INTERVAL / EAGLE_BURST_SIZE;
-        fireShot(def, target, dpa, simTime);
+        const eagleSplash = applySplash(def, target, dpa, simTime);
+        fireShot(def, target, dpa, simTime, eagleSplash);
         def.burstRemaining -= 1;
         if (def.burstRemaining > 0) {
           def.attackCooldown = EAGLE_SHOT_INTERVAL;
@@ -690,7 +733,8 @@ export function simulateAttack(
         continue;
       }
 
-      fireShot(def, target, def.dps * def.attackSpeed, simTime);
+      const splashHits = applySplash(def, target, def.dps * def.attackSpeed, simTime);
+      fireShot(def, target, def.dps * def.attackSpeed, simTime, splashHits);
       def.attackCooldown = def.attackSpeed;
     }
 
@@ -735,14 +779,17 @@ export function simulateAttack(
       );
 
       if (distToFootprint <= troop.attackRange) {
-        const damage = troop.dps * TICK;
-        const actualDamage = Math.min(damage, targetEntity.hp);
-        targetEntity.hp -= actualDamage;
-
-        if (targetEntity.hp <= 0 && targetEntity.alive) {
-          targetEntity.hp = 0;
-          targetEntity.alive = false;
-          targetEntity.destroyedAt = simTime;
+        troop.attackCooldown -= TICK;
+        if (troop.attackCooldown <= 0) {
+          const damage = troop.dps * troop.attackSpeed;
+          const actualDamage = Math.min(damage, targetEntity.hp);
+          targetEntity.hp -= actualDamage;
+          if (targetEntity.hp <= 0 && targetEntity.alive) {
+            targetEntity.hp = 0;
+            targetEntity.alive = false;
+            targetEntity.destroyedAt = simTime;
+          }
+          troop.attackCooldown = troop.attackSpeed;
         }
       } else {
         // Move toward the building centre until the footprint is in range.

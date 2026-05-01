@@ -14,6 +14,8 @@ export interface Troop {
   movementSpeed: number;
   attackType: AttackType;
   preferredTarget: PreferredTarget;
+  /** Seconds between attacks. */
+  attackSpeed: number;
   levels: TroopLevel[];
 }
 
@@ -24,6 +26,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 18,
     attackType: "Ground",
     preferredTarget: "None",
+    attackSpeed: 1.0,
     levels: [
       { level: 1,  hp: 45,  dps: 9,  townHallRequired: 1  },
       { level: 2,  hp: 54,  dps: 12, townHallRequired: 1  },
@@ -46,6 +49,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 24,
     attackType: "Ground & Air",
     preferredTarget: "None",
+    attackSpeed: 1.0,
     levels: [
       { level: 1, hp: 20,  dps: 7,   townHallRequired: 1 },
       { level: 2, hp: 23,  dps: 9,   townHallRequired: 1 },
@@ -69,6 +73,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 12,
     attackType: "Ground",
     preferredTarget: "Defenses",
+    attackSpeed: 2.0,
     levels: [
       { level: 1, hp: 300,  dps: 11,  townHallRequired: 1 },
       { level: 2, hp: 360,  dps: 14,  townHallRequired: 1 },
@@ -92,6 +97,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 32,
     attackType: "Ground",
     preferredTarget: "Resources",
+    attackSpeed: 1.0,
     levels: [
       { level: 1, hp: 25,  dps: 11,  townHallRequired: 1 },
       { level: 2, hp: 30,  dps: 14,  townHallRequired: 1 },
@@ -115,6 +121,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 24,
     attackType: "Ground",
     preferredTarget: "None",
+    attackSpeed: 1.0,
     levels: [
       { level: 1, hp: 20,  dps: 12,  townHallRequired: 2 },
       { level: 2, hp: 24,  dps: 18,  townHallRequired: 3 },
@@ -138,6 +145,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 10,
     attackType: "Ground", // unité aérienne qui attaque les défenses au sol
     preferredTarget: "Defenses",
+    attackSpeed: 3.0,
     levels: [
       { level: 1, hp: 150, dps: 25,  townHallRequired: 2  },
       { level: 2, hp: 180, dps: 32,  townHallRequired: 3  },
@@ -156,6 +164,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 16,
     attackType: "Ground & Air",
     preferredTarget: "None",
+    attackSpeed: 1.4,
     levels: [
       { level: 1, hp: 75,  dps: 35,  townHallRequired: 4 },
       { level: 2, hp: 90,  dps: 50,  townHallRequired: 5 },
@@ -178,6 +187,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 14,
     attackType: "Air",
     preferredTarget: "None",
+    attackSpeed: 0.5,
     levels: [
       { level: 1, hp: 1200, dps: 0, townHallRequired: 6 },
       { level: 2, hp: 1440, dps: 0, townHallRequired: 7 },
@@ -196,6 +206,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 20,
     attackType: "Ground & Air",
     preferredTarget: "None",
+    attackSpeed: 2.0,
     levels: [
       { level: 1, hp: 1900,  dps: 100, townHallRequired: 7 },
       { level: 2, hp: 2280,  dps: 120, townHallRequired: 7 },
@@ -216,6 +227,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 16,
     attackType: "Ground",
     preferredTarget: "None",
+    attackSpeed: 1.8,
     levels: [
       { level: 1, hp: 2500,  dps: 200, townHallRequired: 8 },
       { level: 2, hp: 2900,  dps: 240, townHallRequired: 8 },
@@ -235,6 +247,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 20,
     attackType: "Ground & Air",
     preferredTarget: "None",
+    attackSpeed: 1.5,
     levels: [
       { level: 1,  hp: 1200, dps: 75,  townHallRequired: 9  },
       { level: 2,  hp: 1300, dps: 85,  townHallRequired: 9  },
@@ -256,6 +269,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 32,
     attackType: "Ground",
     preferredTarget: "None",
+    attackSpeed: 1.8,
     levels: [
       { level: 1, hp: 600,  dps: 80,  townHallRequired: 10 },
       { level: 2, hp: 720,  dps: 96,  townHallRequired: 10 },
@@ -273,6 +287,7 @@ export const TROOPS: Troop[] = [
     movementSpeed: 13,
     attackType: "Ground & Air",
     preferredTarget: "None",
+    attackSpeed: 2.5,
     levels: [
       { level: 1, hp: 3400, dps: 260, townHallRequired: 11 },
       { level: 2, hp: 3900, dps: 290, townHallRequired: 11 },

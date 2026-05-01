@@ -24,6 +24,8 @@ export interface Defense {
   size: number;
   /** Seconds between attacks. */
   attackSpeed: number;
+  /** Splash radius in tiles (0 = single target). */
+  splashRadius?: number;
   /** Non-obvious mechanics: modes, splash radius, activation conditions, etc. */
   notes?: string;
   levels: DefenseLevel[];
@@ -95,6 +97,7 @@ export const DEFENSES: Defense[] = [
     targetType: "Ground",
     size: 3,
     attackSpeed: 5,
+    splashRadius: 1.5,
     notes: "Splash weapon (radius 1.5 tiles). Min range 4 — cannot target nearby units. DPS is low because damage is delivered as heavy area-splash per slow shot.",
     levels: [
       { level: 1,  hp: 400,  dps: 4,  minRange: 4, maxRange: 11, townHallRequired: 3  },
@@ -141,6 +144,7 @@ export const DEFENSES: Defense[] = [
     targetType: "Ground & Air",
     size: 3,
     attackSpeed: 1,
+    splashRadius: 1.5,
     notes: "Splash weapon (radius 1.5 tiles). Hits all units within splash radius around the targeted unit.",
     levels: [
       { level: 1,  hp: 620,  dps: 11,  minRange: 0, maxRange: 7, townHallRequired: 5  },
@@ -210,6 +214,7 @@ export const DEFENSES: Defense[] = [
     targetType: "Ground & Air",
     size: 4,
     attackSpeed: 1,
+    splashRadius: 3,
     notes: "Fires a burst of 3 shells with area splash. Inactive until 150 housing spaces of troops have been deployed. Min range 7 — cannot hit nearby units.",
     levels: [
       { level: 1, hp: 4000,  dps: 112, minRange: 7, maxRange: 50, townHallRequired: 11 },
