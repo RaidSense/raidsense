@@ -709,22 +709,30 @@ export function simulateAttack(
     for (const def of defenses.values()) {
       if (!def.alive) continue;
 
-      // Reacquire if current target is dead or out of range.
+      // Always target the nearest valid troop (CoC behaviour).
+      // Cooldown resets only when forced: target died or left range.
       const prevDefTargetId = def.targetId;
       const currentTarget = def.targetId ? troops.get(def.targetId) : undefined;
+      let forceReset = false;
+
       if (!currentTarget?.alive) {
         def.targetId = pickDefenseTarget(def);
+        forceReset   = def.targetId !== prevDefTargetId;
       } else {
         const d = euclidean(def.position, currentTarget.position);
         if (d < def.minRange || d > def.maxRange) {
           def.targetId = pickDefenseTarget(def);
+          forceReset   = def.targetId !== prevDefTargetId;
+        } else {
+          // Target alive and in range — silently switch to closest if a nearer one appeared.
+          def.targetId = pickDefenseTarget(def);
         }
       }
 
-      // Discrete defenses: reset attack timer on any target change (new troop, death, out-of-range).
-      if (def.isDiscrete && def.targetId !== prevDefTargetId) {
+      // Discrete defenses: reset timer only on forced target change (death / OOR).
+      if (def.isDiscrete && forceReset) {
         def.attackCooldown = def.attackSpeed;
-        if (DEBUG && def.targetId !== null) {
+        if (DEBUG) {
           console.log(`[DEBUG t=${simTime.toFixed(2)}s] CIBLE ${def.defenseId}(${def.instanceId}) → ${def.targetId} | cooldown reset à ${def.attackSpeed.toFixed(3)}s`);
         }
       }
