@@ -59,7 +59,7 @@ const TROOP_ATTACK_RANGE: Record<string, number> = {
   "pekka":          0.8,
   "baby-dragon":    2.0,
   "miner":          0.5,
-  "electro-dragon": 2.5,
+  "electro-dragon": 3,
 };
 
 // ---------------------------------------------------------------------------
@@ -143,6 +143,21 @@ export interface BuildingResult {
   destroyedAt: number | null;
 }
 
+/** One link in an Electro Dragon chain. */
+export interface ChainLink {
+  from:         Vec2;
+  to:           Vec2;
+  targetInstId: string;
+  damage:       number;
+}
+
+/** Full chain event emitted each time an Electro Dragon fires. */
+export interface ChainEvent {
+  time:           number;
+  attackerInstId: string;
+  links:          ChainLink[];
+}
+
 /** Discrete heal applied to one troop at one tick. Used for precise HP tracking in replay. */
 export interface HealTickEvent {
   time:         number;
@@ -214,6 +229,7 @@ export interface SimulationResult {
   shots: ShotEvent[];
   heals: HealEvent[];
   healEvents: HealTickEvent[];
+  chainEvents: ChainEvent[];
   targetChanges: TargetChangeEvent[];
 }
 
@@ -236,6 +252,9 @@ interface TroopState {
   healVisualCooldown:  number;   // counts down; emits HealEvent when ≤ 0
   isUnderground:       boolean;  // true while Miner is burrowing toward target
   undergroundHistory:  boolean[];
+  chainMaxTargets:     number;   // Electro Dragon chain (0 = no chain)
+  chainFalloff:        number;   // damage multiplier per bounce
+  chainRange:          number;   // max centre-to-centre distance per bounce (tiles)
   position: Vec2;
   isAirUnit: boolean;
   preferredTarget: string;
@@ -396,6 +415,9 @@ export function simulateAttack(
       healVisualCooldown: 0,
       isUnderground:      dep.troopId === "miner",
       undergroundHistory: [],
+      chainMaxTargets:    troopData.chainMaxTargets ?? 0,
+      chainFalloff:       troopData.chainFalloff    ?? 1,
+      chainRange:         troopData.chainRange      ?? 0,
       position: { ...dep.dropPosition },
       isAirUnit,
       preferredTarget: troopData.preferredTarget,
@@ -593,6 +615,7 @@ export function simulateAttack(
   const shots:         ShotEvent[]         = [];
   const heals:         HealEvent[]         = [];
   const healEvents:    HealTickEvent[]     = [];
+  const chainEvents:   ChainEvent[]        = [];
   const targetChanges: TargetChangeEvent[] = [];
 
   function fireShot(
@@ -987,26 +1010,78 @@ export function simulateAttack(
         troop.attackCooldown -= TICK;
         if (troop.attackCooldown <= 0) {
           const damage = troop.dps * troop.attackSpeed;
-          const actualDamage = Math.min(damage, targetEntity.hp);
-          targetEntity.hp -= actualDamage;
-          if (targetEntity.hp <= 0 && targetEntity.alive) {
-            targetEntity.hp = 0;
-            targetEntity.alive = false;
-            targetEntity.destroyedAt = simTime;
-          }
-          if (troop.splashRadius > 0) {
-            for (const [id, entity] of [
-              ...[...defenses.entries()],
-              ...[...buildings.entries()],
-            ] as [string, DefenseState | BuildingState][]) {
-              if (!entity.alive || id === troop.targetId) continue;
-              if (euclidean(targetEntity.position, entity.position) <= troop.splashRadius) {
-                const splashActual = Math.min(damage, entity.hp);
-                entity.hp -= splashActual;
-                if (entity.hp <= 0 && entity.alive) {
-                  entity.hp = 0;
-                  entity.alive = false;
-                  entity.destroyedAt = simTime;
+
+          if (troop.chainMaxTargets > 0) {
+            // ── Electro Dragon : chaîne d'éclairs ────────────────────────────
+            const tc = (p: Vec2): Vec2 => ({ x: p.x + 0.5, y: p.y + 0.5 });
+            const links: ChainLink[] = [];
+            const hitIds = new Set<string>([troop.targetId!]);
+
+            // Frappe principale
+            const primaryActual = Math.min(damage, targetEntity.hp);
+            targetEntity.hp -= primaryActual;
+            if (targetEntity.hp <= 0 && targetEntity.alive) {
+              targetEntity.hp = 0; targetEntity.alive = false; targetEntity.destroyedAt = simTime;
+            }
+            links.push({ from: tc(troop.position), to: tc(targetEntity.position), targetInstId: troop.targetId!, damage: primaryActual });
+
+            // Rebonds
+            let prevPos = targetEntity.position;
+            let multiplier = 1.0;
+            for (let bounce = 1; bounce < troop.chainMaxTargets; bounce++) {
+              multiplier *= troop.chainFalloff;
+              let nextId: string | null = null;
+              let bestDist = Infinity;
+              let bestHp = -1;
+              for (const [id, ent] of defenses) {
+                if (!ent.alive || hitIds.has(id)) continue;
+                const d = euclidean(prevPos, ent.position);
+                if (d <= troop.chainRange && (d < bestDist || (d === bestDist && ent.hp > bestHp))) {
+                  bestDist = d; nextId = id; bestHp = ent.hp;
+                }
+              }
+              for (const [id, ent] of buildings) {
+                if (!ent.alive || hitIds.has(id)) continue;
+                const d = euclidean(prevPos, ent.position);
+                if (d <= troop.chainRange && (d < bestDist || (d === bestDist && ent.hp > bestHp))) {
+                  bestDist = d; nextId = id; bestHp = ent.hp;
+                }
+              }
+              if (nextId === null) break;
+              hitIds.add(nextId);
+              const nextEnt = (defenses.get(nextId) ?? buildings.get(nextId))!;
+              const chainActual = Math.min(damage * multiplier, nextEnt.hp);
+              nextEnt.hp -= chainActual;
+              if (nextEnt.hp <= 0 && nextEnt.alive) {
+                nextEnt.hp = 0; nextEnt.alive = false; nextEnt.destroyedAt = simTime;
+              }
+              links.push({ from: tc(prevPos), to: tc(nextEnt.position), targetInstId: nextId, damage: chainActual });
+              prevPos = nextEnt.position;
+            }
+            chainEvents.push({ time: simTime, attackerInstId: troop.instanceId, links });
+          } else {
+            // ── Attaque normale (+ splash éventuel pour le Dragon) ────────────
+            const actualDamage = Math.min(damage, targetEntity.hp);
+            targetEntity.hp -= actualDamage;
+            if (targetEntity.hp <= 0 && targetEntity.alive) {
+              targetEntity.hp = 0;
+              targetEntity.alive = false;
+              targetEntity.destroyedAt = simTime;
+            }
+            if (troop.splashRadius > 0) {
+              for (const [id, entity] of [
+                ...[...defenses.entries()],
+                ...[...buildings.entries()],
+              ] as [string, DefenseState | BuildingState][]) {
+                if (!entity.alive || id === troop.targetId) continue;
+                if (euclidean(targetEntity.position, entity.position) <= troop.splashRadius) {
+                  const splashActual = Math.min(damage, entity.hp);
+                  entity.hp -= splashActual;
+                  if (entity.hp <= 0 && entity.alive) {
+                    entity.hp = 0;
+                    entity.alive = false;
+                    entity.destroyedAt = simTime;
+                  }
                 }
               }
             }
@@ -1089,6 +1164,7 @@ export function simulateAttack(
     shots,
     heals,
     healEvents,
+    chainEvents,
     targetChanges,
   };
 }

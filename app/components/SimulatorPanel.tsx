@@ -13,6 +13,7 @@ import type {
   Vec2,
   HealEvent,
   HealTickEvent,
+  ChainEvent,
 } from "../../lib/engine/calculator";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -409,6 +410,27 @@ export default function SimulatorPanel() {
     return out.length ? out : undefined;
   }, [showReplay, result, replayTime, cellSize]);
 
+  // Electro Dragon chain links visible for ~0.35 s after firing
+  const CHAIN_DURATION = 0.35;
+  const activeChainLinks = useMemo(() => {
+    if (!showReplay || !result?.chainEvents?.length) return undefined;
+    const out: { x1: number; y1: number; x2: number; y2: number; alpha: number }[] = [];
+    for (const ev of result.chainEvents) {
+      if (ev.time > replayTime) break;
+      const age = replayTime - ev.time;
+      if (age > CHAIN_DURATION) continue;
+      const alpha = 1 - age / CHAIN_DURATION;
+      for (const link of ev.links) {
+        out.push({
+          x1: link.from.x * cellSize, y1: link.from.y * cellSize,
+          x2: link.to.x   * cellSize, y2: link.to.y   * cellSize,
+          alpha,
+        });
+      }
+    }
+    return out.length ? out : undefined;
+  }, [showReplay, result, replayTime, cellSize]);
+
   // Projectiles currently in flight at replayTime
   const activeProjectiles = useMemo(() => {
     if (!showReplay || !result?.shots?.length) return undefined;
@@ -767,6 +789,7 @@ export default function SimulatorPanel() {
             infernoBeams={infernoBeams}
             activeHealOrbs={activeHealOrbs}
             healHalos={healHalos}
+            activeChainLinks={activeChainLinks}
             targetLines={targetLines}
             onCellSizeChange={setCellSize}
             result={result}
@@ -937,6 +960,7 @@ function BattleGrid({
   infernoBeams,
   activeHealOrbs,
   healHalos,
+  activeChainLinks,
   targetLines,
   onMove,
   onModeToggle,
@@ -965,6 +989,7 @@ function BattleGrid({
   infernoBeams?:      { x1: number; y1: number; x2: number; y2: number; stage: 0|1|2 }[];
   activeHealOrbs?:    { x: number; y: number }[];
   healHalos?:         { x: number; y: number; alpha: number }[];
+  activeChainLinks?:  { x1: number; y1: number; x2: number; y2: number; alpha: number }[];
   targetLines?:  { x1: number; y1: number; x2: number; y2: number; color: string }[];
   onMove?: (instanceId: string, toX: number, toY: number) => void;
   onModeToggle?: (instanceId: string) => void;
@@ -1385,6 +1410,14 @@ function BattleGrid({
               stroke={color} strokeWidth={sw} strokeOpacity={0.85} strokeLinecap="round" />
           );
         })}
+        {/* Electro Dragon chain lightning */}
+        {activeChainLinks?.map((link, i) => (
+          <line key={`chain-${i}`}
+            x1={link.x1} y1={link.y1} x2={link.x2} y2={link.y2}
+            stroke="#67e8f9" strokeWidth={2.5} strokeLinecap="round"
+            opacity={link.alpha * 0.9}
+          />
+        ))}
         {/* Heal orbs in flight — glowing lime sphere */}
         {activeHealOrbs?.map((h, i) => (
           <g key={`heal-orb-${i}`}>

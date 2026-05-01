@@ -20,6 +20,12 @@ export interface Troop {
   attackSpeed: number;
   /** Splash radius in tiles around the primary target (0 = single-target). */
   splashRadius?: number;
+  /** Max targets in an electric chain including primary (0 = no chain). */
+  chainMaxTargets?: number;
+  /** Damage multiplier applied per bounce (e.g. 0.8 = 80 %). */
+  chainFalloff?: number;
+  /** Max centre-to-centre distance in tiles between consecutive chain targets. */
+  chainRange?: number;
   levels: TroopLevel[];
 }
 
@@ -298,7 +304,10 @@ export const TROOPS: Troop[] = [
     movementSpeed: 13,
     attackType: "Ground & Air",
     preferredTarget: "None",
-    attackSpeed: 2.5,
+    attackSpeed: 3.5,
+    chainMaxTargets: 5,
+    chainFalloff:    0.8,
+    chainRange:      1,
     levels: [
       { level: 1, hp: 3400, dps: 260, townHallRequired: 11 },
       { level: 2, hp: 3900, dps: 290, townHallRequired: 11 },
