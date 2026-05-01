@@ -297,7 +297,7 @@ export default function SimulatorPanel() {
   }, [replayPlaying]);
 
   // Troop dots interpolated at current replay time
-  // HP is computed from actual projectile impact times (shot.time + travel) — not linearly.
+  // HP interpolated from per-second simulation snapshots — handles damage and healing.
   const replayDots = useMemo(() => {
     if (!showReplay || !result || !meta.length) return undefined;
     return meta.flatMap((m) => {
@@ -305,31 +305,11 @@ export default function SimulatorPanel() {
       if (!tr) return [];
       const pos = interpolatePosition(tr.positionPerSecond, replayTime, tr.destroyedAt);
       if (!pos) return [];
-      // Compute HP by subtracting impacts that have landed by replayTime
-      let hp = m.maxHp;
-      for (const shot of result.shots) {
-        if (shot.time > replayTime) break;
-        // Primary hit
-        if (shot.targetInstId === m.instanceId) {
-          const dx = shot.troopPos.x - shot.defPos.x;
-          const dy = shot.troopPos.y - shot.defPos.y;
-          const impactTime = shot.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
-          if (impactTime <= replayTime) hp -= shot.damage;
-        }
-        // Cone/splash residual hits (scattershot)
-        if (shot.residualProjectiles) {
-          for (const rp of shot.residualProjectiles) {
-            if (rp.targetInstId !== m.instanceId) continue;
-            const pdx = shot.troopPos.x - shot.defPos.x;
-            const pdy = shot.troopPos.y - shot.defPos.y;
-            const primaryImpact = shot.time + Math.sqrt(pdx * pdx + pdy * pdy) / PROJECTILE_SPEED;
-            const rdx = rp.to.x - rp.from.x;
-            const rdy = rp.to.y - rp.from.y;
-            const impactTime = primaryImpact + Math.sqrt(rdx * rdx + rdy * rdy) / PROJECTILE_SPEED;
-            if (impactTime <= replayTime) hp -= rp.damage;
-          }
-        }
-      }
+      const s0  = Math.min(Math.floor(replayTime), tr.hpPerSecond.length - 1);
+      const s1  = Math.min(s0 + 1, tr.hpPerSecond.length - 1);
+      const hp0 = tr.hpPerSecond[s0] ?? 0;
+      const hp1 = tr.hpPerSecond[s1] ?? 0;
+      const hp  = hp0 + (hp1 - hp0) * (replayTime - Math.floor(replayTime));
       const hpPct = m.maxHp > 0 ? Math.max(0, Math.min(1, hp / m.maxHp)) : 0;
       return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label, hpPct }];
     });
