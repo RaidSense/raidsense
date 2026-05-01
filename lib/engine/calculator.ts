@@ -341,6 +341,13 @@ function distanceToFootprint(p: Vec2, center: Vec2, size: number): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+/** Edge-to-edge distance between two square footprints. Returns 0 when touching or overlapping. */
+function distanceBetweenFootprints(aPos: Vec2, aSize: number, bPos: Vec2, bSize: number): number {
+  const dx = Math.max(0, Math.abs(aPos.x - bPos.x) - aSize / 2 - bSize / 2);
+  const dy = Math.max(0, Math.abs(aPos.y - bPos.y) - aSize / 2 - bSize / 2);
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
 function defenseCanTarget(targetType: TargetType, isAirUnit: boolean): boolean {
   if (targetType === "Ground & Air") return true;
   return targetType === "Air" ? isAirUnit : !isAirUnit;
@@ -1026,7 +1033,8 @@ export function simulateAttack(
             links.push({ from: tc(troop.position), to: tc(targetEntity.position), targetInstId: troop.targetId!, damage: primaryActual });
 
             // Rebonds
-            let prevPos = targetEntity.position;
+            let prevPos  = targetEntity.position;
+            let prevSize = targetEntity.size;
             let multiplier = 1.0;
             for (let bounce = 1; bounce < troop.chainMaxTargets; bounce++) {
               multiplier *= troop.chainFalloff;
@@ -1035,14 +1043,14 @@ export function simulateAttack(
               let bestHp = -1;
               for (const [id, ent] of defenses) {
                 if (!ent.alive || hitIds.has(id)) continue;
-                const d = euclidean(prevPos, ent.position);
+                const d = distanceBetweenFootprints(prevPos, prevSize, ent.position, ent.size);
                 if (d <= troop.chainRange && (d < bestDist || (d === bestDist && ent.hp > bestHp))) {
                   bestDist = d; nextId = id; bestHp = ent.hp;
                 }
               }
               for (const [id, ent] of buildings) {
                 if (!ent.alive || hitIds.has(id)) continue;
-                const d = euclidean(prevPos, ent.position);
+                const d = distanceBetweenFootprints(prevPos, prevSize, ent.position, ent.size);
                 if (d <= troop.chainRange && (d < bestDist || (d === bestDist && ent.hp > bestHp))) {
                   bestDist = d; nextId = id; bestHp = ent.hp;
                 }
@@ -1056,7 +1064,8 @@ export function simulateAttack(
                 nextEnt.hp = 0; nextEnt.alive = false; nextEnt.destroyedAt = simTime;
               }
               links.push({ from: tc(prevPos), to: tc(nextEnt.position), targetInstId: nextId, damage: chainActual });
-              prevPos = nextEnt.position;
+              prevPos  = nextEnt.position;
+              prevSize = nextEnt.size;
             }
             chainEvents.push({ time: simTime, attackerInstId: troop.instanceId, links });
           } else {
