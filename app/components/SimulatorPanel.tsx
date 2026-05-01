@@ -1482,11 +1482,11 @@ function BattleGrid({
                   {dot.trailCx !== undefined && dot.trailCy !== undefined && (
                     <line
                       x1={dot.trailCx} y1={dot.trailCy} x2={dot.cx} y2={dot.cy}
-                      stroke="#92400e" strokeWidth={2.5}
-                      strokeDasharray="3 4" strokeLinecap="round" opacity={0.65}
+                      stroke="#b45309" strokeWidth={5}
+                      strokeDasharray="5 3" strokeLinecap="round" opacity={0.85}
                     />
                   )}
-                  <circle cx={dot.cx} cy={dot.cy} r={3} fill="#92400e" opacity={0.30} />
+                  <circle cx={dot.cx} cy={dot.cy} r={4.5} fill="#b45309" opacity={0.55} />
                 </>
               )}
               {/* Sprite normal — masqué quand sous terre */}
