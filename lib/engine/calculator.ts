@@ -821,23 +821,28 @@ export function simulateAttack(
         if (def.burstRemaining === 0) {
           def.interBurstCooldown -= TICK;
           if (def.interBurstCooldown <= 0) {
-            // Start of a new burst: pick and lock the target.
-            const burstTargetId = pickDefenseTarget(def);
-            if (burstTargetId === null) continue;
-            const burstTroop         = troops.get(burstTargetId)!;
-            def.targetId             = burstTargetId;
-            def.lockedBurstPos       = { ...burstTroop.position };
-            def.lockedBurstTargetId  = burstTargetId;
-            def.burstRemaining       = EAGLE_BURST_SIZE;
-            def.attackCooldown       = 0;
+            def.burstRemaining = EAGLE_BURST_SIZE;
+            def.attackCooldown = 0;
+            // lockedBurstPos cleared at burst end; will be set lazily on first shot.
           }
           continue;
         }
         def.attackCooldown -= TICK;
         if (def.attackCooldown > 0) continue;
 
+        // Lock the burst target on the first shot of each burst (lockedBurstPos is null
+        // at simulation start and after each burst ends).
+        if (def.lockedBurstPos === null) {
+          const burstTargetId = pickDefenseTarget(def);
+          if (burstTargetId === null) continue;
+          const burstTroop        = troops.get(burstTargetId)!;
+          def.targetId            = burstTargetId;
+          def.lockedBurstPos      = { ...burstTroop.position };
+          def.lockedBurstTargetId = burstTargetId;
+        }
+
         // Fire at the locked position — same point for all 3 shots.
-        const lPos = def.lockedBurstPos!;
+        const lPos = def.lockedBurstPos;
         const dpa  = def.dps * EAGLE_BURST_INTERVAL / EAGLE_BURST_SIZE;
         const hitTargets: string[] = [];
         for (const [id, t] of troops) {
