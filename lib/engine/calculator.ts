@@ -1015,7 +1015,8 @@ export function simulateAttack(
         let fallbackMaxHp = -1;
         for (const [id, t] of troops) {
           if (!t.alive || !t.isActive || id === troop.instanceId) continue;
-          if (t.hps > 0 || t.isAirUnit) continue; // ignorer Healers et unités aériennes
+          if (t.hps > 0)    continue; // ignorer les autres Healers
+          if (t.isAirUnit)  continue; // le Healer ne soigne que les troupes au sol
           if (t.hp < t.maxHp) {
             if (t.maxHp > bestMaxHp) { bestMaxHp = t.maxHp; healTargetId = id; }
           } else {
@@ -1030,7 +1031,7 @@ export function simulateAttack(
         const distToTarget = euclidean(troop.position, healTarget.position);
 
         if (distToTarget <= troop.attackRange) {
-          // Soin continu chaque tick — troupes AU SOL uniquement (pas les Healers ni les unités aériennes).
+          // Soin continu chaque tick — troupes au sol non-Healer dans splashRadius autour de la cible.
           const healPerTick = troop.hps * TICK * healMultiplier;
           for (const [, t] of troops) {
             if (!t.alive || !t.isActive || t.hps > 0 || t.isAirUnit) continue;
@@ -1052,7 +1053,7 @@ export function simulateAttack(
               targetInstId:  resolvedTargetId,
               targetPos:     { x: healTarget.position.x + 0.5, y: healTarget.position.y + 0.5 },
               healedTargets: [...troops.values()]
-                .filter((t) => t.alive && t.isActive && t.hps === 0 && !t.isAirUnit &&
+                .filter((t) => t.alive && t.isActive && t.hps === 0 &&
                                euclidean(healTarget.position, t.position) <= HEALER_SPLASH_RADIUS)
                 .map((t) => t.instanceId),
             });
