@@ -490,6 +490,9 @@ export default function SimulatorPanel() {
 
   // ── Replay state ────────────────────────────────────────────────────────────
   const [showReplay,      setShowReplay]      = useState<boolean>(false);
+  const [showRanges,      setShowRanges]      = useState<boolean>(false);
+  const [showHeatmap,     setShowHeatmap]     = useState<boolean>(false);
+  const [debugMode,       setDebugMode]       = useState<boolean>(false);
   const [replayPlaying,   setReplayPlaying]   = useState<boolean>(false);
   const [replayTime,      setReplayTime]      = useState<number>(0);
   const [replaySpeed,     setReplaySpeed]     = useState<1 | 2>(1);
@@ -822,6 +825,72 @@ export default function SimulatorPanel() {
 
   const totalTroops = troopSlots.reduce((s, sl) => s + sl.count, 0);
 
+  // ── Heatmap DPS : un Float32Array normalisé [0..1] par case ──────────────
+  const heatmapData = useMemo((): Float32Array | null => {
+    if (!showHeatmap || !placed.length) return null;
+    const N = GRID_SIZE;
+    const grid = new Float32Array(N * N);
+    let maxVal = 0;
+    for (const d of placed) {
+      const defData = DEFENSES.find((x) => x.id === d.defenseId);
+      if (!defData) continue;
+      const lvl = defData.levels.find((l) => l.level === d.level);
+      if (!lvl) continue;
+      const sz = defData.size ?? 1;
+      const cx = d.x + sz / 2;
+      const cy = d.y + sz / 2;
+      const { maxRange, minRange, dps } = lvl as { maxRange: number; minRange: number; dps: number };
+      const r0 = Math.max(0, Math.floor(cy - maxRange));
+      const r1 = Math.min(N - 1, Math.ceil(cy + maxRange));
+      const c0 = Math.max(0, Math.floor(cx - maxRange));
+      const c1 = Math.min(N - 1, Math.ceil(cx + maxRange));
+      for (let ty = r0; ty <= r1; ty++) {
+        for (let tx = c0; tx <= c1; tx++) {
+          const dist = Math.hypot(tx + 0.5 - cx, ty + 0.5 - cy);
+          if (dist >= minRange && dist <= maxRange) {
+            const v = grid[ty * N + tx] + dps;
+            grid[ty * N + tx] = v;
+            if (v > maxVal) maxVal = v;
+          }
+        }
+      }
+    }
+    if (maxVal === 0) return null;
+    for (let i = 0; i < grid.length; i++) grid[i] /= maxVal;
+    return grid;
+  }, [showHeatmap, placed]);
+
+  // ── Analyse post-simulation ───────────────────────────────────────────────
+  const analysisStats = useMemo(() => {
+    if (!result) return null;
+    const defsByDamage = Object.entries(result.defenses)
+      .filter(([, dr]) => dr.totalDamageDealt > 0)
+      .map(([id, dr]) => {
+        const p = placed.find((d) => d.instanceId === id);
+        const name = p ? (DEFENSES.find((d) => d.id === p.defenseId)?.name ?? p.defenseId) : id;
+        return { id, name, damage: Math.round(dr.totalDamageDealt) };
+      })
+      .sort((a, b) => b.damage - a.damage);
+
+    const targetCounts: Record<string, number> = {};
+    for (const tc of result.targetChanges) {
+      if (tc.newTargetId) targetCounts[tc.newTargetId] = (targetCounts[tc.newTargetId] ?? 0) + 1;
+    }
+    const mostTargetedId = Object.entries(targetCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+    const mostTargetedMeta = meta.find((m) => m.instanceId === mostTargetedId);
+
+    const deadTroops = Object.entries(result.troops)
+      .filter(([, tr]) => tr.destroyedAt !== null)
+      .map(([id, tr]) => ({ label: meta.find((m) => m.instanceId === id)?.label ?? id, time: tr.destroyedAt! }))
+      .sort((a, b) => a.time - b.time);
+
+    const avgDeathTime = deadTroops.length
+      ? Math.round((deadTroops.reduce((s, x) => s + x.time, 0) / deadTroops.length) * 10) / 10
+      : null;
+
+    return { defsByDamage, mostTargeted: mostTargetedMeta ? { name: mostTargetedMeta.label, count: targetCounts[mostTargetedId!] } : null, deadTroops, avgDeathTime, totalDead: deadTroops.length, totalTroopsCount: Object.keys(result.troops).length };
+  }, [result, placed, meta]);
+
   function clearResult() {
     setResult(null); setMeta([]);
     setShowReplay(false); setReplayPlaying(false); setReplayTime(0);
@@ -1043,8 +1112,26 @@ export default function SimulatorPanel() {
         {/* Grid */}
         <div className="min-w-0 flex-1 space-y-2" style={{ maxWidth: 560 }}>
           <p className="text-xs text-slate-500">
-            Glisser une défense depuis le panneau → poser sur la grille &nbsp;·&nbsp; Cliquer sur une défense pour la supprimer
+            Glisser une défense depuis le panneau → poser sur la grille &nbsp;·&nbsp; Cliquer pour supprimer
           </p>
+          {/* View toggles */}
+          <div className="flex gap-1.5 flex-wrap">
+            {([
+              { key: "ranges",  label: "◎ Portées",  active: showRanges,  set: setShowRanges,  color: "blue"   },
+              { key: "heatmap", label: "▦ Heatmap",  active: showHeatmap, set: setShowHeatmap, color: "red"    },
+              { key: "debug",   label: "⚙ Debug",    active: debugMode,   set: setDebugMode,   color: "yellow" },
+            ] as const).map(({ key, label, active, set, color }) => (
+              <button key={key} onClick={() => set((v) => !v)}
+                className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                  active
+                    ? color === "blue"   ? "border-blue-500/60 bg-blue-500/15 text-blue-300"
+                    : color === "red"    ? "border-red-500/60 bg-red-500/15 text-red-300"
+                                        : "border-yellow-500/60 bg-yellow-500/15 text-yellow-300"
+                    : "border-slate-700 text-slate-500 hover:text-slate-300"
+                }`}
+              >{label}</button>
+            ))}
+          </div>
           <BattleGrid
             placed={placed}
             onPlace={handlePlace}
@@ -1076,6 +1163,9 @@ export default function SimulatorPanel() {
             result={result}
             replayTime={replayTime}
             hpOnDamageOnly={hpOnDamageOnly}
+            showAllRanges={showRanges}
+            heatmapData={heatmapData}
+            debugMode={debugMode}
           />
           <p className="text-xs text-slate-600">
             Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp;
@@ -1214,6 +1304,54 @@ export default function SimulatorPanel() {
         </>
       )}
 
+      {/* Analysis panel */}
+      {analysisStats && (
+        <div className="rounded-2xl border border-[#141a30] bg-[#06080f] p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-slate-200">Analyse</h3>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="space-y-0.5">
+              <p className="text-slate-500">Défense la + dangereuse</p>
+              <p className="text-white font-medium">{analysisStats.defsByDamage[0]?.name ?? "—"}</p>
+              <p className="text-red-400">{analysisStats.defsByDamage[0]?.damage ?? 0} dégâts</p>
+            </div>
+            <div className="space-y-0.5">
+              <p className="text-slate-500">Troupe la + ciblée</p>
+              <p className="text-white font-medium">{analysisStats.mostTargeted?.name ?? "—"}</p>
+              <p className="text-orange-400">{analysisStats.mostTargeted?.count ?? 0} fois</p>
+            </div>
+            <div className="space-y-0.5">
+              <p className="text-slate-500">Pertes</p>
+              <p className="text-white font-medium">{analysisStats.totalDead}/{analysisStats.totalTroopsCount} troupes</p>
+              <p className="text-slate-400">mort moy. à {analysisStats.avgDeathTime ?? "—"}s</p>
+            </div>
+            {analysisStats.deadTroops[0] && (
+              <div className="space-y-0.5">
+                <p className="text-slate-500">Première mort</p>
+                <p className="text-white font-medium">{analysisStats.deadTroops[0].label}</p>
+                <p className="text-slate-400">à {analysisStats.deadTroops[0].time.toFixed(1)}s</p>
+              </div>
+            )}
+          </div>
+          {analysisStats.defsByDamage.length > 1 && (
+            <div className="space-y-1">
+              <p className="text-xs text-slate-500">Dégâts par défense</p>
+              {analysisStats.defsByDamage.slice(0, 5).map((d, i) => {
+                const pct = Math.round((d.damage / analysisStats.defsByDamage[0].damage) * 100);
+                return (
+                  <div key={d.id} className="flex items-center gap-2">
+                    <span className="w-28 text-xs text-slate-300 truncate">{d.name}</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-slate-800">
+                      <div className="h-full rounded-full bg-red-500/70" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-xs text-slate-400 w-12 text-right">{d.damage}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Results */}
       {result && (
         <ResultsSection
@@ -1298,6 +1436,9 @@ function BattleGrid({
   activeDeathLightning,
   activeTroopFireballs,
   targetLines,
+  showAllRanges,
+  heatmapData,
+  debugMode,
   onMove,
   onModeToggle,
   placedBuildings,
@@ -1345,11 +1486,39 @@ function BattleGrid({
   result?: import("../../lib/engine/calculator").SimulationResult | null;
   replayTime?: number;
   hpOnDamageOnly?: boolean;
+  showAllRanges?: boolean;
+  heatmapData?: Float32Array | null;
+  debugMode?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell,          setDragCell]          = useState<string | null>(null);
   const [hoveredDefenseId,  setHoveredDefenseId]  = useState<string | null>(null);
   const [cellPx, setCellPx] = useState<number>(CELL);
+
+  // Heatmap: Float32Array → canvas → dataURL (single SVG <image> for perf)
+  const heatmapSrc = useMemo((): string | null => {
+    if (!heatmapData) return null;
+    const N = GRID_SIZE;
+    const canvas = document.createElement("canvas");
+    canvas.width = N; canvas.height = N;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    const img = ctx.createImageData(N, N);
+    for (let i = 0; i < N * N; i++) {
+      const v = heatmapData[i];
+      if (v < 0.02) continue;
+      const r = Math.round(180 + v * 75);
+      const g = Math.round((1 - v) * 140);
+      const b = 0;
+      const a = Math.round((0.12 + v * 0.32) * 255);
+      img.data[i * 4]     = r;
+      img.data[i * 4 + 1] = g;
+      img.data[i * 4 + 2] = b;
+      img.data[i * 4 + 3] = a;
+    }
+    ctx.putImageData(img, 0, 0);
+    return canvas.toDataURL();
+  }, [heatmapData]);
 
   // Measure container width → derive cell size; fire onCellSizeChange
   useEffect(() => {
@@ -1607,6 +1776,11 @@ function BattleGrid({
 
       {/* SVG: drop ring + drag highlight */}
       <svg className="absolute inset-0 pointer-events-none" style={{ zIndex: 2 }} width="100%" height="100%">
+        {/* Heatmap DPS — couche la plus basse */}
+        {heatmapSrc && (
+          <image href={heatmapSrc} x={0} y={0} width={W} height={W}
+            style={{ imageRendering: "pixelated" }} />
+        )}
         {/* Deployment zone — full perimeter ring (evenodd donut) */}
         {(() => {
           const M = DEPLOY_MARGIN * cellPx;
@@ -1694,6 +1868,38 @@ function BattleGrid({
                 <text x={cx} y={cy + 8} textAnchor="middle" dominantBaseline="middle"
                   fontSize={3.5} fill="rgba(251,191,36,0.85)" style={{ pointerEvents: "none", userSelect: "none" }}
                 >{pt.deployAt}s</text>
+              )}
+            </g>
+          );
+        })}
+        {/* Portées de toutes les défenses (toggle) */}
+        {showAllRanges && placed.map((d) => {
+          const defData   = DEFENSES.find((def) => def.id === d.defenseId);
+          if (!defData) return null;
+          const levelData = defData.levels.find((l) => l.level === d.level);
+          if (!levelData) return null;
+          const sz    = defData.size ?? 1;
+          const cx    = (d.x + sz / 2) * cellPx;
+          const cy    = (d.y + sz / 2) * cellPx;
+          const effectiveMax =
+            d.defenseId === "x-bow"         && d.mode === "both"   ? 11.5 :
+            d.defenseId === "inferno-tower" && d.mode !== "single" ? 10   :
+            levelData.maxRange;
+          const maxR  = effectiveMax * cellPx;
+          const minR  = (levelData.minRange ?? 0) * cellPx;
+          const color = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
+          const arc   = (r: number) =>
+            `M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${2*r} 0 a ${r} ${r} 0 1 0 ${-2*r} 0`;
+          return (
+            <g key={`range-${d.instanceId}`} opacity={hoveredDefenseId === d.instanceId ? 0 : 1}>
+              <path
+                d={minR > 0 ? `${arc(maxR)} ${arc(minR)}` : arc(maxR)}
+                fillRule="evenodd" fill={`${color}18`} />
+              <circle cx={cx} cy={cy} r={maxR}
+                fill="none" stroke={color} strokeWidth={0.75} strokeOpacity={0.5} strokeDasharray="4 3" />
+              {minR > 0 && (
+                <circle cx={cx} cy={cy} r={minR}
+                  fill="none" stroke="#ef4444" strokeWidth={0.75} strokeOpacity={0.5} strokeDasharray="3 3" />
               )}
             </g>
           );
@@ -2002,6 +2208,32 @@ function BattleGrid({
                 </>
               )}
             </g>
+          );
+        })}
+        {/* Debug overlay — HP valeurs + distance cible */}
+        {debugMode && replayDots?.map((dot) => {
+          const hpVal = Math.round(dot.hpPct * 999); // approximation affichage
+          return (
+            <g key={`dbg-${dot.id}`} style={{ pointerEvents: "none" }}>
+              <text x={dot.cx} y={dot.cy - 8}
+                textAnchor="middle" fontSize={4.5} fontFamily="monospace"
+                fill="#fbbf24" opacity={0.9}
+                style={{ userSelect: "none" }}
+              >{Math.round(dot.hpPct * 100)}%</text>
+            </g>
+          );
+        })}
+        {/* Debug: target line labels */}
+        {debugMode && targetLines?.map((l, i) => {
+          const mx = (l.x1 + l.x2) / 2;
+          const my = (l.y1 + l.y2) / 2;
+          const dist = Math.round(Math.hypot(l.x2 - l.x1, l.y2 - l.y1) / cellPx * 10) / 10;
+          return (
+            <text key={`dbg-tl-${i}`} x={mx} y={my}
+              textAnchor="middle" fontSize={4} fontFamily="monospace"
+              fill="#94a3b8" opacity={0.8}
+              style={{ userSelect: "none" }}
+            >{dist}t</text>
           );
         })}
       </svg>
