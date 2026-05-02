@@ -163,6 +163,7 @@ export interface TroopFireEvent {
   from:           Vec2;   // attacker centre (tile + 0.5)
   to:             Vec2;   // target centre (tile + 0.5)
   targetInstId:   string;
+  damage:         number; // actual damage dealt to the primary target
 }
 
 /** One death-lightning bolt impact from a dying Electro Dragon. */
@@ -1199,7 +1200,7 @@ export function simulateAttack(
                 }
               }
             }
-            // Baby Dragon fireball event (visuel replay)
+            // Baby Dragon fireball event (visuel + tracking dégâts sous-seconde)
             if (troop.troopId === "baby-dragon") {
               troopFireEvents.push({
                 time:           simTime,
@@ -1208,6 +1209,7 @@ export function simulateAttack(
                 from:           { x: troop.position.x + 0.5, y: troop.position.y + 0.5 },
                 to:             { x: targetEntity.position.x + 0.5, y: targetEntity.position.y + 0.5 },
                 targetInstId:   troop.targetId!,
+                damage:         actualDamage,
               });
             }
           }

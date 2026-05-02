@@ -1480,12 +1480,22 @@ function BattleGrid({
           const rt = replayTime ?? 0;
           const s  = Math.min(Math.floor(rt), dr.hpPerSecond.length - 1);
           let hp   = dr.hpPerSecond[s] ?? maxHp;
+          // Chain sub-second damage
           for (const ev of replayResult.chainEvents ?? []) {
             if (ev.time > rt) break;
             if (ev.time <= s) continue;
             for (const link of ev.links) {
               if (link.targetInstId === d.instanceId) hp -= link.damage;
             }
+          }
+          // Baby Dragon fireball: apply at visual impact time
+          for (const ev of replayResult.troopFireEvents ?? []) {
+            if (ev.time > rt) break;
+            if (ev.targetInstId !== d.instanceId) continue;
+            const dx = ev.to.x - ev.from.x;
+            const dy = ev.to.y - ev.from.y;
+            const impactTime = ev.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
+            if (impactTime > s && impactTime <= rt) hp -= ev.damage;
           }
           hp = Math.max(0, hp);
           const pct = Math.max(0, Math.min(1, hp / maxHp));
@@ -1513,12 +1523,22 @@ function BattleGrid({
           const rt = replayTime ?? 0;
           const s  = Math.min(Math.floor(rt), br.hpPerSecond.length - 1);
           let hp   = br.hpPerSecond[s] ?? maxHp;
+          // Chain sub-second damage
           for (const ev of replayResult.chainEvents ?? []) {
             if (ev.time > rt) break;
             if (ev.time <= s) continue;
             for (const link of ev.links) {
               if (link.targetInstId === b.instanceId) hp -= link.damage;
             }
+          }
+          // Baby Dragon fireball: apply at visual impact time
+          for (const ev of replayResult.troopFireEvents ?? []) {
+            if (ev.time > rt) break;
+            if (ev.targetInstId !== b.instanceId) continue;
+            const dx = ev.to.x - ev.from.x;
+            const dy = ev.to.y - ev.from.y;
+            const impactTime = ev.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
+            if (impactTime > s && impactTime <= rt) hp -= ev.damage;
           }
           hp = Math.max(0, hp);
           const pct = Math.max(0, Math.min(1, hp / maxHp));
