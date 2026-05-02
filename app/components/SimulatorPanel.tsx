@@ -342,6 +342,129 @@ const TEST_SCENARIOS: TestScenario[] = [
     ],
     placed: [_d("d1", "wizard-tower", 8, 21, 20)],
   },
+
+  // ── Scattershot tests ────────────────────────────────────────────────────
+  {
+    name: "Scatter — troupes hors zone morte",
+    troopSlots: [{ slotId: "s1", troopId: "giant", level: 6, count: 6 }],
+    placed: [_d("d1", "scattershot", 3, 20, 19)],
+    // Giants auto-déployés sur le bord → distance > minRange → doivent être ciblés
+  },
+  {
+    name: "Scatter — troupes dans zone morte (ignorées)",
+    useManualPlacement: true,
+    troopSlots: [{ slotId: "s1", troopId: "giant", level: 6, count: 4 }],
+    placed: [_d("d1", "scattershot", 3, 20, 19)],
+    // Scattershot 4x4 centré en (22,21). minRange=4. Troupes placées à 2 tiles du centre → ignorées.
+    placedTroops: [
+      { instanceId: "pt1", troopId: "giant", level: 6, x: 21, y: 22, deployAt: 0 },
+      { instanceId: "pt2", troopId: "giant", level: 6, x: 22, y: 22, deployAt: 0 },
+      { instanceId: "pt3", troopId: "giant", level: 6, x: 21, y: 21, deployAt: 0 },
+      { instanceId: "pt4", troopId: "giant", level: 6, x: 23, y: 22, deployAt: 0 },
+    ],
+  },
+  {
+    name: "Scatter — cône arrière + avant",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",     level: 6, count: 4 },
+      { slotId: "s2", troopId: "barbarian", level: 8, count: 8 },
+    ],
+    placed: [_d("d1", "scattershot", 3, 20, 20), _d("d2", "cannon", 8, 20, 10)],
+  },
+
+  // ── Baby Dragon rage tests ────────────────────────────────────────────────
+  {
+    name: "Baby Dragon seul → enragé ✓",
+    troopSlots: [{ slotId: "s1", troopId: "baby-dragon", level: 5, count: 1 }],
+    placed: [_d("d1", "cannon", 10, 21, 20)],
+  },
+  {
+    name: "Baby Dragon + Dragon → toujours enragé ✓",
+    useManualPlacement: true,
+    troopSlots: [
+      { slotId: "s1", troopId: "baby-dragon", level: 5, count: 1 },
+      { slotId: "s2", troopId: "dragon",      level: 3, count: 1 },
+    ],
+    placed: [_d("d1", "air-defense", 8, 21, 20)],
+    placedTroops: [
+      { instanceId: "pt1", troopId: "baby-dragon", level: 5, x: 2, y: 20, deployAt: 0 },
+      { instanceId: "pt2", troopId: "dragon",      level: 3, x: 2, y: 21, deployAt: 0 },
+    ],
+  },
+  {
+    name: "2 Baby Dragons proches → non enragés ✓",
+    useManualPlacement: true,
+    troopSlots: [
+      { slotId: "s1", troopId: "baby-dragon", level: 5, count: 2 },
+    ],
+    placed: [_d("d1", "cannon", 10, 21, 20)],
+    placedTroops: [
+      { instanceId: "pt1", troopId: "baby-dragon", level: 5, x: 2, y: 20, deployAt: 0 },
+      { instanceId: "pt2", troopId: "baby-dragon", level: 5, x: 2, y: 22, deployAt: 0 },
+    ],
+  },
+
+  // ── Electro Dragon tests ─────────────────────────────────────────────────
+  {
+    name: "E-Dragon — chaîne 5 cibles (chainMaxTargets=5)",
+    troopSlots: [{ slotId: "s1", troopId: "electro-dragon", level: 4, count: 1 }],
+    placed: [
+      _d("d1", "cannon", 6, 16, 20),
+      _d("d2", "cannon", 6, 19, 20),
+      _d("d3", "cannon", 6, 22, 20),
+      _d("d4", "cannon", 6, 25, 20),
+      _d("d5", "cannon", 6, 28, 20),
+    ],
+  },
+  {
+    name: "E-Dragon — mort électrisante (6 éclairs)",
+    troopSlots: [{ slotId: "s1", troopId: "electro-dragon", level: 2, count: 1 }],
+    placed: [
+      _d("d1", "cannon", 12, 16, 18),
+      _d("d2", "cannon", 12, 22, 18),
+      _d("d3", "cannon", 12, 28, 18),
+      _d("d4", "air-defense", 8, 19, 23),
+    ],
+  },
+
+  // ── Miner ────────────────────────────────────────────────────────────────
+  {
+    name: "Miner — invulnérable sous terre",
+    troopSlots: [{ slotId: "s1", troopId: "miner", level: 5, count: 3 }],
+    placed: [_d("d1", "cannon", 10, 21, 20), _d("d2", "archer-tower", 8, 15, 20)],
+  },
+
+  // ── Divers ───────────────────────────────────────────────────────────────
+  {
+    name: "Giant + 3 Healers vs Canon",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",  level: 7, count: 5 },
+      { slotId: "s2", troopId: "healer", level: 4, count: 3 },
+    ],
+    placed: [_d("d1", "cannon", 12, 21, 20)],
+  },
+  {
+    name: "Dragon splash 0.3 — bâtiments collés",
+    troopSlots: [{ slotId: "s1", troopId: "dragon", level: 4, count: 2 }],
+    placed: [
+      _d("d1", "cannon", 8, 19, 20),
+      _d("d2", "cannon", 8, 22, 20),
+      _d("d3", "cannon", 8, 25, 20),
+    ],
+  },
+  {
+    name: "Air Defense vs Dragon (unité aérienne)",
+    troopSlots: [{ slotId: "s1", troopId: "dragon", level: 4, count: 3 }],
+    placed: [_d("d1", "air-defense", 10, 21, 20)],
+  },
+  {
+    name: "Eagle Artillery — salve + 3 impacts au même endroit",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",  level: 5, count: 5 },
+      { slotId: "s2", troopId: "archer", level: 6, count: 5 },
+    ],
+    placed: [_d("d1", "eagle-artillery", 4, 20, 19)],
+  },
 ];
 
 export default function SimulatorPanel() {

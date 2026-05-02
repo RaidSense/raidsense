@@ -637,7 +637,8 @@ export function simulateAttack(
       if (!troop.alive || !troop.isActive) continue;
       if (troop.isUnderground) continue;
       if (!defenseCanTarget(def.targetType, troop.isAirUnit)) continue;
-      const d = euclidean(def.position, troop.position);
+      // Use troop centre (+0.5) for accurate min/max range checks, especially the dead zone.
+      const d = euclidean(def.position, { x: troop.position.x + 0.5, y: troop.position.y + 0.5 });
       if (d >= def.minRange && d <= def.maxRange && d < bestDist) {
         bestDist = d;
         bestId = id;
@@ -910,7 +911,7 @@ export function simulateAttack(
         def.targetId = pickDefenseTarget(def);
         forceReset   = def.targetId !== prevDefTargetId;
       } else {
-        const d = euclidean(def.position, currentTarget.position);
+        const d = euclidean(def.position, { x: currentTarget.position.x + 0.5, y: currentTarget.position.y + 0.5 });
         if (d < def.minRange || d > def.maxRange) {
           def.targetId = pickDefenseTarget(def);
           forceReset   = def.targetId !== prevDefTargetId;
@@ -1103,11 +1104,13 @@ export function simulateAttack(
         troop.isUnderground = distToFootprint > troop.attackRange;
       }
 
-      // Baby Dragon: enragé si aucune unité aérienne alliée dans le rayon 4.5 tiles
+      // Baby Dragon: enragé si aucun AUTRE Baby Dragon allié vivant dans le rayon 4.5 tiles.
+      // Les autres troupes aériennes (Dragon, Electro Dragon, Healer, Balloon…) ne comptent pas.
       if (troop.troopId === "baby-dragon") {
         troop.isEnraged = true;
         for (const [id, t] of troops) {
-          if (id === troop.instanceId || !t.alive || !t.isActive || !t.isAirUnit) continue;
+          if (id === troop.instanceId || !t.alive || !t.isActive) continue;
+          if (t.troopId !== "baby-dragon") continue;
           if (euclidean(troop.position, t.position) < ENRAGE_RADIUS) {
             troop.isEnraged = false;
             break;
