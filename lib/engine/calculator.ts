@@ -308,8 +308,10 @@ interface DefenseState {
   attackSpeed:        number;
   attackCooldown:     number;
   isDiscrete:         boolean;  // true = uses initial-delay + target-change reset
-  burstRemaining:     number;   // Eagle Artillery burst; -1 = N/A
-  interBurstCooldown: number;
+  burstRemaining:      number;   // Eagle Artillery burst; -1 = N/A
+  interBurstCooldown:  number;
+  lockedBurstPos:      Vec2 | null;   // impact position locked at burst start
+  lockedBurstTargetId: string | null; // target locked at burst start
   hpHistory:          number[];  // per-second HP snapshots
   // ── X-Bow / Inferno Tower mode ──────────────────────────────────────────
   mode:               string;   // "" | "ground" | "both" | "single" | "multi"
@@ -504,8 +506,10 @@ export function simulateAttack(
       splashType:         defData.splashType ?? "none",
       attackCooldown:     DISCRETE_DEFENSE_IDS.has(pl.defenseId) ? defData.attackSpeed : 0,
       isDiscrete:         DISCRETE_DEFENSE_IDS.has(pl.defenseId),
-      burstRemaining:     isEagle ? EAGLE_BURST_SIZE : -1,
-      interBurstCooldown: 0,
+      burstRemaining:      isEagle ? EAGLE_BURST_SIZE : -1,
+      interBurstCooldown:  0,
+      lockedBurstPos:      null,
+      lockedBurstTargetId: null,
       mode,
       dpsSingleInit:      levelData.dpsSingleInit ?? 0,
       dpsSingleMid:       levelData.dpsSingleMid  ?? 0,
@@ -810,6 +814,64 @@ export function simulateAttack(
     for (const def of defenses.values()) {
       if (!def.alive) continue;
 
+      // ── Eagle Artillery burst mechanics ───────────────────────────────────
+      // Handled before normal target selection so the burst target is locked
+      // for all 3 shots; no retargeting mid-burst.
+      if (def.burstRemaining >= 0) {
+        if (def.burstRemaining === 0) {
+          def.interBurstCooldown -= TICK;
+          if (def.interBurstCooldown <= 0) {
+            // Start of a new burst: pick and lock the target.
+            const burstTargetId = pickDefenseTarget(def);
+            if (burstTargetId === null) continue;
+            const burstTroop         = troops.get(burstTargetId)!;
+            def.targetId             = burstTargetId;
+            def.lockedBurstPos       = { ...burstTroop.position };
+            def.lockedBurstTargetId  = burstTargetId;
+            def.burstRemaining       = EAGLE_BURST_SIZE;
+            def.attackCooldown       = 0;
+          }
+          continue;
+        }
+        def.attackCooldown -= TICK;
+        if (def.attackCooldown > 0) continue;
+
+        // Fire at the locked position — same point for all 3 shots.
+        const lPos = def.lockedBurstPos!;
+        const dpa  = def.dps * EAGLE_BURST_INTERVAL / EAGLE_BURST_SIZE;
+        const hitTargets: string[] = [];
+        for (const [id, t] of troops) {
+          if (!t.alive || !t.isActive) continue;
+          if (!defenseCanTarget(def.targetType, t.isAirUnit)) continue;
+          if (euclidean(lPos, t.position) <= def.splashRadius) {
+            const actual = Math.min(dpa, t.hp);
+            t.hp -= actual;
+            def.totalDamageDealt += actual;
+            if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
+            hitTargets.push(id);
+          }
+        }
+        shots.push({
+          time:         simTime,
+          defenseId:    def.defenseId,
+          defInstId:    def.instanceId,
+          targetInstId: def.lockedBurstTargetId ?? "",
+          damage:       dpa,
+          hitTargets,
+          defPos:       { ...def.position },
+          troopPos:     { x: lPos.x + 0.5, y: lPos.y + 0.5 },
+        });
+        def.burstRemaining -= 1;
+        if (def.burstRemaining > 0) {
+          def.attackCooldown = EAGLE_SHOT_INTERVAL;
+        } else {
+          def.interBurstCooldown  = EAGLE_INTER_BURST;
+          def.lockedBurstPos      = null;
+          def.lockedBurstTargetId = null;
+        }
+        continue;
+      }
+
       // Always target the nearest valid troop (CoC behaviour).
       // Cooldown resets only when forced: target died or left range.
       const prevDefTargetId = def.targetId;
@@ -840,31 +902,6 @@ export function simulateAttack(
 
       if (def.targetId === null) continue;
       const target = troops.get(def.targetId)!;
-
-      // ── Eagle Artillery burst mechanics ───────────────────────────────────
-      if (def.burstRemaining >= 0) {
-        if (def.burstRemaining === 0) {
-          def.interBurstCooldown -= TICK;
-          if (def.interBurstCooldown <= 0) {
-            def.burstRemaining = EAGLE_BURST_SIZE;
-            def.attackCooldown = 0;
-          }
-          continue;
-        }
-        def.attackCooldown -= TICK;
-        if (def.attackCooldown > 0) continue;
-
-        const dpa = def.dps * EAGLE_BURST_INTERVAL / EAGLE_BURST_SIZE;
-        const eagleSplash = applySplash(def, target, dpa, simTime);
-        fireShot(def, target, dpa, simTime, eagleSplash);
-        def.burstRemaining -= 1;
-        if (def.burstRemaining > 0) {
-          def.attackCooldown = EAGLE_SHOT_INTERVAL;
-        } else {
-          def.interBurstCooldown = EAGLE_INTER_BURST;
-        }
-        continue;
-      }
 
       // ── Inferno Tower single-target mode ──────────────────────────────────
       if (def.defenseId === "inferno-tower" && def.mode === "single") {

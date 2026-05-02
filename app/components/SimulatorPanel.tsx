@@ -464,16 +464,20 @@ export default function SimulatorPanel() {
     for (const shot of result.shots) {
       if (shot.time > replayTime) break;
       const elapsed = replayTime - shot.time;
-      const dx  = shot.troopPos.x - shot.defPos.x;
-      const dy  = shot.troopPos.y - shot.defPos.y;
+      // Eagle Artillery: projectiles fall from the sky above the impact point.
+      const startPos = shot.defenseId === "eagle-artillery"
+        ? { x: shot.troopPos.x - 1, y: shot.troopPos.y - 7 }
+        : shot.defPos;
+      const dx  = shot.troopPos.x - startPos.x;
+      const dy  = shot.troopPos.y - startPos.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist === 0) continue;
       const travelTime = dist / PROJECTILE_SPEED;
       if (elapsed >= travelTime) continue;
       const t = elapsed / travelTime;
       out.push({
-        x:         (shot.defPos.x  + dx * t) * cellSize,
-        y:         (shot.defPos.y  + dy * t) * cellSize,
+        x:         (startPos.x + dx * t) * cellSize,
+        y:         (startPos.y + dy * t) * cellSize,
         color:     DEFENSE_FILL[shot.defenseId] ?? "#ffffff",
         defenseId: shot.defenseId,
         progress:  t,
