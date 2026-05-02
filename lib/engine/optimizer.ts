@@ -10,6 +10,7 @@ import {
   type DefensePlacement,
   type BuildingPlacement,
 } from "./calculator";
+import { type WallPlacement } from "../data/walls";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -133,6 +134,7 @@ export function createBestDeployment(
   defenses:  DefensePlacement[],
   buildings: BuildingPlacement[],
   options:   OptimizerOptions,
+  walls:     WallPlacement[] = [],
 ): OptimizationResult {
   const {
     iterations,
@@ -155,7 +157,7 @@ export function createBestDeployment(
       deployAt:     t.deployAt ?? 0,
     }));
 
-    const simResult = simulateAttack(deployments, defenses, buildings);
+    const simResult = simulateAttack(deployments, defenses, buildings, walls);
     const score     = scoreSimResult(simResult);
 
     candidates.push({ deployments, score, simResult });

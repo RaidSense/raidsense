@@ -2,6 +2,7 @@
 
 import { useState, useRef, useMemo, useEffect } from "react";
 import { TROOPS } from "../../lib/data/troops";
+import { type WallPlacement, WALL_HP, MAX_WALL_LEVEL } from "../../lib/data/walls";
 import { DEFENSES } from "../../lib/data/defenses";
 import { NEUTRAL_BUILDINGS } from "../../lib/data/neutral-buildings";
 import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
@@ -254,6 +255,65 @@ function buildNeutralBuildingPlacements(placed: PlacedBuilding[]): BuildingPlace
 
 // ── SimulatorPanel ─────────────────────────────────────────────────────────
 
+// ── Wall SVG rendering ──────────────────────────────────────────────────────
+
+function renderWallSvg(level: number, px: number, py: number, sz: number): React.ReactNode {
+  const p = 1; // padding
+  const W = sz - p * 2;
+  const H = sz - p * 2;
+  const x = px + p;
+  const y = py + p;
+  const cx = x + W / 2;
+  const rx = 2;
+
+  const configs: Record<number, { base: string; border: string; hi: string; detail: React.ReactNode }> = {
+    1:  { base:"#92400e", border:"#78350f", hi:"#b45309",
+          detail:<line x1={cx-1} y1={y+1} x2={cx-1} y2={y+H-1} stroke="#78350f" strokeWidth={0.6}/> },
+    2:  { base:"#9ca3af", border:"#6b7280", hi:"#d1d5db",
+          detail:<line x1={x+2} y1={y+H/2} x2={x+W-1} y2={y+H/2+1} stroke="#6b7280" strokeWidth={0.5}/> },
+    3:  { base:"#6b7280", border:"#4b5563", hi:"#9ca3af",
+          detail:<rect x={x+1} y={y+1} width={2} height={2} fill="#4b5563" rx={0.5}/> },
+    4:  { base:"#4b5563", border:"#374151", hi:"#6b7280",
+          detail:<><rect x={x} y={y} width={2} height={2} fill="#374151"/><rect x={x+W-2} y={y+H-2} width={2} height={2} fill="#374151"/></> },
+    5:  { base:"#d97706", border:"#b45309", hi:"#fbbf24",
+          detail:<path d={`M ${cx-2} ${y+1} L ${cx} ${y-1} L ${cx+2} ${y+1}`} fill="#fef08a" stroke="#f59e0b" strokeWidth={0.5}/> },
+    6:  { base:"#1f2937", border:"#111827", hi:"#374151",
+          detail:<path d={`M ${cx} ${y} L ${cx-1.5} ${y+4} L ${cx+1.5} ${y+4} Z`} fill="#f472b6" opacity={0.9}/> },
+    7:  { base:"#1f2937", border:"#111827", hi:"#374151",
+          detail:<path d={`M ${cx} ${y-1} L ${cx-1.5} ${y+5} L ${cx+1.5} ${y+5} Z`} fill="#a78bfa" opacity={0.9}/> },
+    8:  { base:"#111827", border:"#030712", hi:"#1f2937",
+          detail:<ellipse cx={cx} cy={y+3} rx={1.5} ry={2.5} fill="#60a5fa" opacity={0.8}/> },
+    9:  { base:"#374151", border:"#1f2937", hi:"#4b5563",
+          detail:<rect x={x+1} y={y+1} width={W-2} height={2} fill="#1f2937" rx={0.5}/> },
+    10: { base:"#1f2937", border:"#111827", hi:"#374151",
+          detail:<><line x1={x} y1={y+H} x2={x+W} y2={y} stroke="#6b7280" strokeWidth={0.6} opacity={0.7}/></>},
+    11: { base:"#111827", border:"#030712", hi:"#1f2937",
+          detail:<><line x1={x+1} y1={y+H-1} x2={cx} y2={y+2} stroke="#f97316" strokeWidth={0.8} opacity={0.9}/><line x1={cx} y1={y+H-2} x2={x+W-1} y2={y+3} stroke="#fb923c" strokeWidth={0.6} opacity={0.7}/></> },
+    12: { base:"#e5e7eb", border:"#f59e0b", hi:"#ffffff",
+          detail:<rect x={x} y={y} width={W} height={H} fill="none" stroke="#f59e0b" strokeWidth={0.8} rx={1}/> },
+    13: { base:"#1f2937", border:"#111827", hi:"#374151",
+          detail:<><ellipse cx={cx} cy={y+H/2} rx={2} ry={2.5} fill="#3b82f6" opacity={0.5}/><ellipse cx={cx} cy={y+H/2} rx={0.8} ry={1} fill="#93c5fd" opacity={0.9}/></> },
+    14: { base:"#0f172a", border:"#020617", hi:"#1e293b",
+          detail:<rect x={x+1} y={y} width={W-2} height={3} fill="#bfdbfe" rx={0.5}/> },
+    15: { base:"#0f172a", border:"#b45309", hi:"#1e293b",
+          detail:<><path d={`M ${x} ${y} L ${x+W} ${y} L ${x+W} ${y+2} L ${x} ${y+2} Z`} fill="#b45309"/><path d={`M ${x} ${y+H} L ${x+W} ${y+H} L ${x+W} ${y+H-2} L ${x} ${y+H-2} Z`} fill="#92400e"/></> },
+    16: { base:"#0f172a", border:"#1e1b4b", hi:"#1e293b",
+          detail:<><line x1={x} y1={y+H} x2={x+W} y2={y} stroke="#7c3aed" strokeWidth={0.7} opacity={0.8}/><line x1={x} y1={y} x2={x+W} y2={y+H} stroke="#3b82f6" strokeWidth={0.5} opacity={0.6}/><ellipse cx={cx} cy={y+H/2} rx={1.2} ry={1.2} fill="#818cf8" opacity={0.7}/></> },
+  };
+
+  const cfg = configs[Math.min(Math.max(level, 1), 16)];
+  return (
+    <g key={`wall-${px}-${py}`}>
+      <rect x={x} y={y} width={W} height={H} fill={cfg.base} stroke={cfg.border} strokeWidth={0.75} rx={rx} />
+      {/* highlight */}
+      <rect x={x+0.5} y={y+0.5} width={W/2} height={1.2} fill={cfg.hi} opacity={0.5} rx={0.5}/>
+      {/* shadow */}
+      <rect x={x} y={y+H-1.5} width={W} height={1.5} fill={cfg.border} opacity={0.5} rx={rx}/>
+      {cfg.detail}
+    </g>
+  );
+}
+
 // ── Test Scenarios ─────────────────────────────────────────────────────────
 // À supprimer après validation des mécaniques.
 
@@ -497,6 +557,12 @@ export default function SimulatorPanel() {
 
   // ── Replay state ────────────────────────────────────────────────────────────
   const [showReplay,      setShowReplay]      = useState<boolean>(false);
+  // Wall placement
+  const [placedWalls,  setPlacedWalls]  = useState<WallPlacement[]>([]);
+  const [wallLevel,    setWallLevel]    = useState<number>(1);
+  const [wallMode,     setWallMode]     = useState<boolean>(false);
+  const [wallDragging, setWallDragging] = useState<boolean>(false);
+
   const [showRanges,      setShowRanges]      = useState<boolean>(false);
   const [showHeatmap,     setShowHeatmap]     = useState<boolean>(false);
   const [debugMode,       setDebugMode]       = useState<boolean>(false);
@@ -1094,6 +1160,7 @@ export default function SimulatorPanel() {
       deployments,
       buildDefensePlacements(placed),
       buildNeutralBuildingPlacements(placedBuildings),
+      placedWalls,
     );
     durationRef.current = r.durationSeconds;
     setResult(r);
@@ -1118,6 +1185,7 @@ export default function SimulatorPanel() {
         buildDefensePlacements(placed),
         buildNeutralBuildingPlacements(placedBuildings),
         { iterations: optIterations, strategy: optStrategy },
+        placedWalls,
       );
       setOptimizationResult(optResult);
       // Apply best deployment as manual placement
@@ -1162,7 +1230,9 @@ export default function SimulatorPanel() {
         {/* Grid */}
         <div className="min-w-0 flex-1 space-y-2" style={{ maxWidth: 560 }}>
           <p className="text-xs text-slate-500">
-            Glisser une défense depuis le panneau → poser sur la grille &nbsp;·&nbsp; Cliquer pour supprimer
+            {wallMode
+              ? "Mode mur : cliquer/glisser pour poser · cliquer sur mur existant pour supprimer"
+              : "Glisser une défense depuis le panneau → poser sur la grille · Cliquer pour supprimer"}
           </p>
           {/* View toggles */}
           <div className="flex gap-1.5 flex-wrap">
@@ -1216,6 +1286,17 @@ export default function SimulatorPanel() {
             showAllRanges={showRanges}
             heatmapData={heatmapData}
             debugMode={debugMode}
+            wallMode={wallMode}
+            wallLevel={wallLevel}
+            placedWalls={placedWalls}
+            onPlaceWall={(x, y) => {
+              const key = `${x},${y}`;
+              if (placedWalls.some((w) => w.x === x && w.y === y)) return;
+              setPlacedWalls((prev) => [...prev, { instanceId: `w-${key}-${Date.now()}`, x, y, level: wallLevel }]);
+              clearResult();
+            }}
+            onRemoveWall={(id) => { setPlacedWalls((prev) => prev.filter((w) => w.instanceId !== id)); clearResult(); }}
+            onWallDragState={setWallDragging}
           />
           <p className="text-xs text-slate-600">
             Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp;
@@ -1252,6 +1333,47 @@ export default function SimulatorPanel() {
               onLevelChange={(id, lv) => setPalBuildingLevels((p) => ({ ...p, [id]: lv }))}
               cellSize={cellSize}
             />
+          </section>
+
+          {/* Wall placement */}
+          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-100">Murs</h2>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">{placedWalls.length} posés</span>
+                <button
+                  onClick={() => { setWallMode((m) => !m); clearResult(); }}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    wallMode
+                      ? "bg-amber-500/20 border border-amber-500/40 text-amber-300"
+                      : "bg-slate-700/40 border border-slate-600/40 text-slate-400 hover:text-slate-200"
+                  }`}
+                >{wallMode ? "✓ Mode mur" : "Mode mur"}</button>
+              </div>
+            </div>
+            {/* Level selector */}
+            <div className="space-y-1">
+              <p className="text-xs text-slate-500">Niveau ({wallLevel})</p>
+              <div className="flex flex-wrap gap-1">
+                {Array.from({ length: MAX_WALL_LEVEL }, (_, i) => i + 1).map((lv) => (
+                  <button key={lv}
+                    onClick={() => setWallLevel(lv)}
+                    title={`Lv${lv} — ${WALL_HP[lv]} HP`}
+                    className={`w-7 h-7 rounded text-xs font-bold transition-colors border ${
+                      wallLevel === lv
+                        ? "border-amber-400/60 bg-amber-500/20 text-amber-200"
+                        : "border-slate-700 text-slate-400 hover:text-slate-200"
+                    }`}
+                  >{lv}</button>
+                ))}
+              </div>
+            </div>
+            {placedWalls.length > 0 && (
+              <button onClick={() => { setPlacedWalls([]); clearResult(); }}
+                className="text-xs text-red-400 hover:text-red-300">
+                ✕ Tout effacer
+              </button>
+            )}
           </section>
 
           {/* Troop composer */}
@@ -1556,6 +1678,12 @@ function BattleGrid({
   showAllRanges,
   heatmapData,
   debugMode,
+  wallMode,
+  wallLevel,
+  placedWalls,
+  onPlaceWall,
+  onRemoveWall,
+  onWallDragState,
   onMove,
   onModeToggle,
   placedBuildings,
@@ -1606,6 +1734,12 @@ function BattleGrid({
   showAllRanges?: boolean;
   heatmapData?: Float32Array | null;
   debugMode?: boolean;
+  wallMode?: boolean;
+  wallLevel?: number;
+  placedWalls?: WallPlacement[];
+  onPlaceWall?: (x: number, y: number) => void;
+  onRemoveWall?: (instanceId: string) => void;
+  onWallDragState?: (dragging: boolean) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell,          setDragCell]          = useState<string | null>(null);
@@ -1716,6 +1850,12 @@ function BattleGrid({
   function onClick(e: React.MouseEvent) {
     const c = cellAt(e);
     if (!c) return;
+    if (wallMode) {
+      const existingWall = placedWalls?.find((w) => w.x === c.x && w.y === c.y);
+      if (existingWall) { onRemoveWall?.(existingWall.instanceId); return; }
+      onPlaceWall?.(c.x, c.y);
+      return;
+    }
     if (placementMode) {
       const existingTroop = placedTroops?.find((t) => t.x === c.x && t.y === c.y);
       if (existingTroop) { onRemovePlacedTroop?.(existingTroop.instanceId); return; }
@@ -1727,6 +1867,21 @@ function BattleGrid({
       if (d) { setHoveredDefenseId(null); onRemove(d.instanceId); }
     }
   }
+
+  function onMouseDown(e: React.MouseEvent) {
+    if (!wallMode) return;
+    onWallDragState?.(true);
+    const c = cellAt(e);
+    if (c && !placedWalls?.find((w) => w.x === c.x && w.y === c.y)) onPlaceWall?.(c.x, c.y);
+  }
+
+  function onMouseMoveDrag(e: React.MouseEvent) {
+    if (!wallMode || e.buttons === 0) return;
+    const c = cellAt(e);
+    if (c && !placedWalls?.find((w) => w.x === c.x && w.y === c.y)) onPlaceWall?.(c.x, c.y);
+  }
+
+  function onMouseUp() { onWallDragState?.(false); }
 
   const isModeCapable = (defId: string) => defId === "x-bow" || defId === "inferno-tower";
   const modeLabel = (d: PlacedDefense) => {
@@ -1883,8 +2038,10 @@ function BattleGrid({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       onClick={onClick}
-      onMouseMove={onMouseMove}
-      onMouseLeave={() => setHoveredDefenseId(null)}
+      onMouseDown={onMouseDown}
+      onMouseMove={(e) => { onMouseMove(e); onMouseMoveDrag(e); }}
+      onMouseUp={onMouseUp}
+      onMouseLeave={() => { setHoveredDefenseId(null); onWallDragState?.(false); }}
     >
       {/* Neutral buildings (behind defenses) */}
       {buildingSquares}
@@ -2021,6 +2178,10 @@ function BattleGrid({
             </g>
           );
         })}
+        {/* Murs placés */}
+        {(placedWalls ?? []).map((w) =>
+          renderWallSvg(w.level, w.x * cellPx, w.y * cellPx, cellPx)
+        )}
         {/* Defense hitboxes — white outline on full size×size footprint */}
         {placed.map((d) => {
           const size = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;

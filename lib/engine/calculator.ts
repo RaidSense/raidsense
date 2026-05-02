@@ -1,6 +1,8 @@
 import { getTroopById } from "../data/troops";
 import { getDefenseById, type TargetType } from "../data/defenses";
 import { getNeutralBuildingById } from "../data/neutral-buildings";
+import { type WallPlacement, WALL_HP } from "../data/walls";
+import { bfsPath, adjacentTilesForFootprint } from "./pathfinding";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -11,6 +13,7 @@ const TICK = 1 / TICKS_PER_SECOND; // 0.1 s
 const MAX_SIM_SECONDS = 180;        // hard cap: 3-minute raid
 
 const SPEED_DIVISOR = 16;
+const GRID_SIZE     = 44;
 
 // Eagle Artillery burst constants
 const EAGLE_BURST_SIZE     = 3;
@@ -148,6 +151,13 @@ export interface DefenseResult {
   totalDamageDealt: number;
 }
 
+/** Per-wall simulation output. */
+export interface WallResult {
+  instanceId:  string;
+  hpPerSecond: number[];
+  destroyedAt: number | null;
+}
+
 /** Per-neutral-building simulation output. */
 export interface BuildingResult {
   instanceId: string;
@@ -259,6 +269,7 @@ export interface SimulationResult {
   defenses: Record<string, DefenseResult>;
   buildings: Record<string, BuildingResult>;
   durationSeconds: number;
+  walls: Record<string, WallResult>;
   shots: ShotEvent[];
   heals: HealEvent[];
   healEvents: HealTickEvent[];
@@ -289,6 +300,11 @@ interface TroopState {
   undergroundHistory:  boolean[];
   isEnraged:           boolean;  // true when Baby Dragon is alone (no allied air unit nearby)
   enragedHistory:      boolean[];
+  // Wall pathfinding
+  bfsPath:      Vec2[];       // remaining tile waypoints around walls
+  bfsTargetId:  string | null; // entity for which the path was computed
+  bfsWallVer:   number;        // wall-version when path was computed
+  wallAttackId: string | null; // wall being attacked when path is blocked
   deathDamage:             number;   // damage per death-lightning bolt (Electro Dragon)
   deathLightningPending:   { fireAt: number; position: Vec2 }[];
   deathLightningTriggered: boolean;
@@ -342,6 +358,16 @@ interface DefenseState {
   singleLockDuration: number;        // seconds locked on current target
   // Inferno Tower multi-target
   multiTargetCount:   number;        // 0 = N/A
+}
+
+interface WallState {
+  instanceId:  string;
+  x:           number;
+  y:           number;
+  hp:          number;
+  alive:       boolean;
+  destroyedAt: number | null;
+  hpHistory:   number[];
 }
 
 interface BuildingState {
@@ -413,9 +439,10 @@ function defenseCanTarget(targetType: TargetType, isAirUnit: boolean): boolean {
  *    defenses and are valid troop targets.
  */
 export function simulateAttack(
-  deployments: TroopDeployment[],
-  placements: DefensePlacement[],
+  deployments:        TroopDeployment[],
+  placements:         DefensePlacement[],
   buildingPlacements: BuildingPlacement[] = [],
+  wallPlacements:     WallPlacement[]     = [],
 ): SimulationResult {
   if (DEBUG) {
     console.log("%c[SIMULATION] Démarrage — cooldown initial activé pour toutes les défenses (sauf TDE)", "color:#22d3ee;font-weight:bold");
@@ -466,6 +493,10 @@ export function simulateAttack(
       undergroundHistory: [],
       isEnraged:          false,
       enragedHistory:     [],
+      bfsPath:      [],
+      bfsTargetId:  null,
+      bfsWallVer:   -1,
+      wallAttackId: null,
       chainMaxTargets:    troopData.chainMaxTargets ?? 0,
       chainFalloff:       troopData.chainFalloff    ?? 1,
       chainRange:         troopData.chainRange      ?? 0,
@@ -562,6 +593,28 @@ export function simulateAttack(
       destroyedAt: null,
       hpHistory:   [],
     });
+  }
+
+  // ── Walls ──────────────────────────────────────────────────────────────────
+
+  const walls = new Map<string, WallState>();
+  for (const wp of wallPlacements) {
+    const hp = WALL_HP[wp.level] ?? 100;
+    walls.set(wp.instanceId, {
+      instanceId: wp.instanceId,
+      x: wp.x, y: wp.y,
+      hp, alive: true, destroyedAt: null, hpHistory: [],
+    });
+  }
+
+  // Version counter — increments whenever a wall dies so troops recompute BFS
+  let wallVersion = 0;
+
+  /** Pre-built Set<"x,y"> of currently alive wall tiles (rebuilt on demand). */
+  function buildBlockedSet(): Set<string> {
+    const s = new Set<string>();
+    for (const [, w] of walls) if (w.alive) s.add(`${w.x},${w.y}`);
+    return s;
   }
 
   // -------------------------------------------------------------------------
@@ -664,6 +717,9 @@ export function simulateAttack(
   }
   for (const bld of buildings.values()) {
     bld.hpHistory.push(Math.ceil(bld.hp));
+  }
+  for (const w of walls.values()) {
+    w.hpHistory.push(Math.ceil(w.hp));
   }
 
   // -------------------------------------------------------------------------
@@ -1219,8 +1275,99 @@ export function simulateAttack(
           }
           troop.attackCooldown = effectiveAttackSpeed;
         }
+      } else if (troop.wallAttackId !== null) {
+        // ── Attacking a blocking wall ─────────────────────────────────────
+        const wall = walls.get(troop.wallAttackId);
+        if (!wall || !wall.alive) {
+          troop.wallAttackId = null;
+          troop.bfsPath      = [];   // will recompute next tick
+        } else {
+          const wallCenter = { x: wall.x + 0.5, y: wall.y + 0.5 };
+          if (euclidean(troop.position, wallCenter) <= troop.attackRange + 0.5) {
+            troop.attackCooldown -= TICK;
+            if (troop.attackCooldown <= 0) {
+              const isEnragedBD = troop.troopId === "baby-dragon" && troop.isEnraged;
+              const effAS  = isEnragedBD ? troop.attackSpeed / 1.5 : troop.attackSpeed;
+              const effDps = isEnragedBD ? troop.dps * 2 : troop.dps;
+              const dmg    = effDps * effAS;
+              const actual = Math.min(dmg, wall.hp);
+              wall.hp -= actual;
+              if (wall.hp <= 0 && wall.alive) {
+                wall.hp = 0; wall.alive = false; wall.destroyedAt = simTime;
+                wallVersion++;
+              }
+              troop.attackCooldown = effAS;
+            }
+          } else {
+            troop.position = stepToward(troop.position, wallCenter, troop.speed * TICK);
+          }
+        }
+      } else if (walls.size > 0 && !troop.isAirUnit && troop.troopId !== "miner") {
+        // ── BFS around walls ──────────────────────────────────────────────
+        const needReplan =
+          troop.bfsTargetId !== troop.targetId ||
+          troop.bfsWallVer  !== wallVersion     ||
+          (troop.bfsPath.length === 0 && troop.wallAttackId === null);
+
+        if (needReplan) {
+          troop.bfsTargetId = troop.targetId;
+          troop.bfsWallVer  = wallVersion;
+          troop.bfsPath     = [];
+          const blocked = buildBlockedSet();
+          const fromTile = { x: Math.floor(troop.position.x), y: Math.floor(troop.position.y) };
+          const goalTiles = adjacentTilesForFootprint(
+            targetEntity.position.x, targetEntity.position.y,
+            (targetEntity as { size: number }).size ?? 1,
+            GRID_SIZE,
+          );
+          const path = bfsPath(fromTile, goalTiles, blocked, GRID_SIZE);
+          if (path === null) {
+            // Blocked — find the wall closest to the direct line toward the target
+            let bestId: string | null = null;
+            let bestD = Infinity;
+            const tx = targetEntity.position.x, ty = targetEntity.position.y;
+            const ddx = tx - troop.position.x, ddy = ty - troop.position.y;
+            const dlen = Math.sqrt(ddx*ddx + ddy*ddy) || 1;
+            for (const [id, w] of walls) {
+              if (!w.alive) continue;
+              const wx = w.x + 0.5, wy = w.y + 0.5;
+              const proj = ((wx - troop.position.x) * ddx + (wy - troop.position.y) * ddy) / dlen;
+              if (proj < 0) continue;
+              const perpD = Math.abs((wx - troop.position.x) * ddy - (wy - troop.position.y) * ddx) / dlen;
+              if (perpD > 2) continue;
+              const d = euclidean(troop.position, { x: wx, y: wy });
+              if (d < bestD) { bestD = d; bestId = id; }
+            }
+            // Fallback: just nearest wall
+            if (!bestId) {
+              for (const [id, w] of walls) {
+                if (!w.alive) continue;
+                const d = euclidean(troop.position, { x: w.x + 0.5, y: w.y + 0.5 });
+                if (d < bestD) { bestD = d; bestId = id; }
+              }
+            }
+            troop.wallAttackId = bestId;
+          } else {
+            troop.bfsPath      = path;
+            troop.wallAttackId = null;
+          }
+        }
+
+        if (troop.bfsPath.length > 0) {
+          const wp    = troop.bfsPath[0];
+          const wpCtr = { x: wp.x + 0.5, y: wp.y + 0.5 };
+          const step  = troop.speed * TICK;
+          if (euclidean(troop.position, wpCtr) <= step + 0.05) {
+            troop.position = { ...wpCtr };
+            troop.bfsPath.shift();
+          } else {
+            troop.position = stepToward(troop.position, wpCtr, step);
+          }
+        } else if (!troop.wallAttackId) {
+          troop.position = stepToward(troop.position, targetEntity.position, troop.speed * TICK);
+        }
       } else {
-        // Move toward the building centre until the footprint is in range.
+        // No walls (or air unit / miner) — straight line
         troop.position = stepToward(troop.position, targetEntity.position, troop.speed * TICK);
       }
     }
@@ -1297,6 +1444,9 @@ export function simulateAttack(
       for (const bld of buildings.values()) {
         bld.hpHistory.push(bld.alive ? Math.ceil(bld.hp) : 0);
       }
+      for (const w of walls.values()) {
+        w.hpHistory.push(w.alive ? Math.ceil(w.hp) : 0);
+      }
     }
 
     // --- Termination check ---------------------------------------------------
@@ -1306,7 +1456,8 @@ export function simulateAttack(
     const hasPendingLightning = [...troops.values()].some(t => t.deathLightningPending.length > 0);
     const allTroopsDead       = [...troops.values()].every((t) => !t.alive);
     const allTargetsDown      = [...defenses.values()].every((d) => !d.alive)
-                             && [...buildings.values()].every((b) => !b.alive);
+                             && [...buildings.values()].every((b) => !b.alive)
+                             && [...walls.values()].every((w) => !w.alive);
     if ((allTroopsDead && !hasPendingLightning) || allTargetsDown) break;
   }
 
@@ -1346,10 +1497,20 @@ export function simulateAttack(
     };
   }
 
+  const wallResults: Record<string, WallResult> = {};
+  for (const [id, w] of walls) {
+    wallResults[id] = {
+      instanceId:  id,
+      hpPerSecond: w.hpHistory,
+      destroyedAt: w.destroyedAt,
+    };
+  }
+
   return {
     troops: troopResults,
     defenses: defenseResults,
     buildings: buildingResults,
+    walls:     wallResults,
     durationSeconds: Math.round(lastSimTime * 10) / 10,
     shots,
     heals,
