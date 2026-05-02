@@ -472,6 +472,229 @@ const TEST_SCENARIOS: TestScenario[] = [
     ],
     placed: [_d("d1", "eagle-artillery", 4, 20, 19)],
   },
+
+  // ═══════════════════════════════════════════════════════════════
+  // PACK DE VALIDATION MOTEUR
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── Groupe 1 : Ciblage prioritaire ───────────────────────────
+
+  {
+    // Giant (preferredTarget=Defenses) doit ignorer le bâtiment neutre et cibler le Cannon.
+    name: "V01 · Giant priorité défense vs bâtiment neutre",
+    troopSlots: [{ slotId: "s1", troopId: "giant", level: 5, count: 2 }],
+    placed: [_d("d1", "cannon", 8, 22, 20)],
+    placedBuildings: [
+      // builder-hut plus proche que le Cannon depuis le bord gauche
+      { instanceId: "b1", buildingId: "builder-hut", level: 1, x: 9, y: 20 },
+    ],
+  },
+  {
+    // Dragon (preferredTarget=None) cible le plus proche de tous les bâtiments.
+    name: "V02 · Dragon cible le plus proche",
+    troopSlots: [{ slotId: "s1", troopId: "dragon", level: 3, count: 1 }],
+    placed: [
+      _d("d1", "archer-tower", 6, 12, 20), // plus proche du bord gauche
+      _d("d2", "cannon",       8, 26, 20), // plus loin
+    ],
+  },
+
+  // ── Groupe 2 : Zones mortes ───────────────────────────────────
+
+  {
+    // Scattershot minRange=3 tiles. Troupes à <3t ignorées ; troupes à >3t ciblées.
+    // Scattershot 3×3 en (20,19) → centre (21.5, 20.5).
+    name: "V03 · Scattershot — zone morte (minRange=3)",
+    useManualPlacement: true,
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",     level: 6, count: 2 },
+      { slotId: "s2", troopId: "barbarian", level: 8, count: 2 },
+    ],
+    placed: [_d("d1", "scattershot", 3, 20, 19)],
+    placedTroops: [
+      // Dans la zone morte : distance ≈ 2t < 3 → ignorés
+      { instanceId: "pt1", troopId: "giant",     level: 6, x: 21, y: 22, deployAt: 0 },
+      { instanceId: "pt2", troopId: "giant",     level: 6, x: 22, y: 22, deployAt: 0 },
+      // Hors zone morte : bord gauche → ciblés
+      { instanceId: "pt3", troopId: "barbarian", level: 8, x: 1,  y: 20, deployAt: 0 },
+      { instanceId: "pt4", troopId: "barbarian", level: 8, x: 1,  y: 22, deployAt: 0 },
+    ],
+  },
+  {
+    // Mortar minRange=4 tiles. Mortar 3×3 en (21,20) → centre (22.5, 21.5).
+    name: "V04 · Mortar — zone morte (minRange=4)",
+    useManualPlacement: true,
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",     level: 5, count: 2 },
+      { slotId: "s2", troopId: "barbarian", level: 8, count: 2 },
+    ],
+    placed: [_d("d1", "mortar", 5, 21, 20)],
+    placedTroops: [
+      // Dans la zone morte : distance ≈ 2t < 4 → ignorés
+      { instanceId: "pt1", troopId: "giant",     level: 5, x: 21, y: 23, deployAt: 0 },
+      { instanceId: "pt2", troopId: "giant",     level: 5, x: 23, y: 23, deployAt: 0 },
+      // Hors zone morte : bord gauche → ciblés
+      { instanceId: "pt3", troopId: "barbarian", level: 8, x: 1,  y: 20, deployAt: 0 },
+      { instanceId: "pt4", troopId: "barbarian", level: 8, x: 1,  y: 22, deployAt: 0 },
+    ],
+  },
+
+  // ── Groupe 3 : Splash ─────────────────────────────────────────
+
+  {
+    // Wizard Tower splashRadius=1.5. Giants groupés → tous touchés.
+    name: "V05 · Wizard Tower splash — 3 troupes groupées",
+    troopSlots: [{ slotId: "s1", troopId: "giant", level: 5, count: 6 }],
+    placed: [_d("d1", "wizard-tower", 8, 21, 20)],
+  },
+  {
+    // Dragon splashRadius=0.3. Centres des Cannons 3×3 espacés de 3t → pas de splash.
+    // Valide : seule la cible primaire est touchée par le splash mini.
+    name: "V06 · Dragon splash 0.3 — seule cible primaire touchée",
+    troopSlots: [{ slotId: "s1", troopId: "dragon", level: 4, count: 1 }],
+    placed: [
+      _d("d1", "cannon", 8, 19, 20), // centre (20.5, 21.5) — cible primaire
+      _d("d2", "cannon", 8, 22, 20), // centre (23.5, 21.5) — à 3t → hors splash 0.3
+      _d("d3", "cannon", 8, 28, 20), // encore plus loin
+    ],
+  },
+
+  // ── Groupe 4 : Electro Dragon ─────────────────────────────────
+
+  {
+    // 5 Cannons bord-à-bord. Chaîne doit en toucher 5 avec dégâts décroissants.
+    name: "V07 · E-Dragon — chaîne 5 cibles max",
+    troopSlots: [{ slotId: "s1", troopId: "electro-dragon", level: 4, count: 1 }],
+    placed: [
+      _d("d1", "cannon", 6, 16, 20),
+      _d("d2", "cannon", 6, 19, 20),
+      _d("d3", "cannon", 6, 22, 20),
+      _d("d4", "cannon", 6, 25, 20),
+      _d("d5", "cannon", 6, 28, 20),
+    ],
+  },
+  {
+    // d1+d2 adjacents (chaîne), d3 espacé de 7t bord-à-bord → chaîne s'arrête.
+    name: "V08 · E-Dragon — chaîne cassée par distance",
+    troopSlots: [{ slotId: "s1", troopId: "electro-dragon", level: 4, count: 1 }],
+    placed: [
+      _d("d1", "cannon", 6, 16, 20), // centre (17.5, 21.5)
+      _d("d2", "cannon", 6, 19, 20), // adjacent → chaîne ok
+      _d("d3", "cannon", 6, 29, 20), // bord-à-bord dist ≈ 7t > chainRange=1 → cassée
+    ],
+  },
+
+  // ── Groupe 5 : Autres défenses ────────────────────────────────
+
+  {
+    // Cannon discret : HP doit descendre par paliers (pas en continu).
+    name: "V09 · Cannon — dégâts discrets (non continus)",
+    troopSlots: [{ slotId: "s1", troopId: "giant", level: 5, count: 1 }],
+    placed: [_d("d1", "cannon", 8, 21, 20)],
+  },
+  {
+    // Eagle Artillery : les 3 tirs d'une salve doivent tomber au même endroit.
+    name: "V10 · Eagle Artillery — salve verrouillée (cible inchangée)",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",  level: 5, count: 4 },
+      { slotId: "s2", troopId: "archer", level: 6, count: 4 },
+    ],
+    placed: [_d("d1", "eagle-artillery", 4, 20, 19)],
+  },
+
+  // ── Groupe 6 : Healer ─────────────────────────────────────────
+
+  {
+    // 1 Giant + 1 Healer vs Cannon. HP doit monter puis descendre, jamais > maxHP.
+    name: "V11 · Giant + 1 Healer vs Cannon",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",  level: 6, count: 1 },
+      { slotId: "s2", troopId: "healer", level: 4, count: 1 },
+    ],
+    placed: [_d("d1", "cannon", 10, 21, 20)],
+  },
+  {
+    // 3 Healers → diminishing returns (90% à partir de 3). Soin visible mais atténué.
+    name: "V12 · Giant + 3 Healers (diminishing 90%)",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",  level: 6, count: 1 },
+      { slotId: "s2", troopId: "healer", level: 4, count: 3 },
+    ],
+    placed: [_d("d1", "cannon", 10, 21, 20)],
+  },
+
+  // ── Groupe 7 : Miner ──────────────────────────────────────────
+
+  {
+    // Cannon + Archer Tower. Pendant déplacement : pas de ciblage. Après remontée : ciblé.
+    name: "V13 · Miner — invulnérable sous terre",
+    troopSlots: [{ slotId: "s1", troopId: "miner", level: 5, count: 1 }],
+    placed: [
+      _d("d1", "cannon",       10, 21, 20),
+      _d("d2", "archer-tower", 8,  28, 20),
+    ],
+  },
+
+  // ── Groupe 8 : Baby Dragon rage ───────────────────────────────
+
+  {
+    // Baby Dragon seul → enragé dès le départ (halo orange visible).
+    name: "V14 · Baby Dragon seul → enragé ✓",
+    troopSlots: [{ slotId: "s1", troopId: "baby-dragon", level: 5, count: 1 }],
+    placed: [_d("d1", "cannon", 10, 21, 20)],
+  },
+  {
+    // Dragon allié proche → Baby Dragon RESTE enragé (Dragon ≠ Baby Dragon).
+    name: "V15 · Baby Dragon + Dragon proche → enragé ✓",
+    useManualPlacement: true,
+    troopSlots: [
+      { slotId: "s1", troopId: "baby-dragon", level: 5, count: 1 },
+      { slotId: "s2", troopId: "dragon",      level: 3, count: 1 },
+    ],
+    placed: [_d("d1", "air-defense", 8, 21, 20)],
+    placedTroops: [
+      { instanceId: "pt1", troopId: "baby-dragon", level: 5, x: 2, y: 20, deployAt: 0 },
+      { instanceId: "pt2", troopId: "dragon",      level: 3, x: 2, y: 21, deployAt: 0 },
+    ],
+  },
+  {
+    // 2 Baby Dragons à <4.5t l'un de l'autre → aucun enragé.
+    name: "V16 · 2 Baby Dragons proches → non enragés ✗",
+    useManualPlacement: true,
+    troopSlots: [{ slotId: "s1", troopId: "baby-dragon", level: 5, count: 2 }],
+    placed: [_d("d1", "cannon", 10, 21, 20)],
+    placedTroops: [
+      { instanceId: "pt1", troopId: "baby-dragon", level: 5, x: 2, y: 20, deployAt: 0 },
+      { instanceId: "pt2", troopId: "baby-dragon", level: 5, x: 2, y: 22, deployAt: 0 },
+    ],
+  },
+
+  // ── Groupe 9 : Optimiseur ─────────────────────────────────────
+
+  {
+    // Base simple : lancer l'optimiseur et vérifier que toutes les positions sont dans la zone de déploiement.
+    name: "V17 · Optimizer — placement légal (zone de déploiement)",
+    troopSlots: [{ slotId: "s1", troopId: "giant", level: 5, count: 6 }],
+    placed: [
+      _d("d1", "cannon",       10, 18, 20),
+      _d("d2", "archer-tower", 8,  24, 20),
+      _d("d3", "mortar",       6,  21, 15),
+    ],
+  },
+  {
+    // Même compo — comparer optimizer (cliquer "Suggérer") vs simuler manuellement.
+    name: "V18 · Optimizer vs manuel — même composition",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",  level: 5, count: 5 },
+      { slotId: "s2", troopId: "archer", level: 6, count: 5 },
+    ],
+    placed: [
+      _d("d1", "cannon",       10, 15, 20),
+      _d("d2", "cannon",       10, 25, 20),
+      _d("d3", "archer-tower", 8,  20, 14),
+      _d("d4", "mortar",       6,  20, 26),
+    ],
+  },
 ];
 
 export default function SimulatorPanel() {
