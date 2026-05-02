@@ -2,7 +2,7 @@ import { getTroopById } from "../data/troops";
 import { getDefenseById, type TargetType } from "../data/defenses";
 import { getNeutralBuildingById } from "../data/neutral-buildings";
 import { type WallPlacement, WALL_HP } from "../data/walls";
-import { bfsPath, adjacentTilesForFootprint } from "./pathfinding";
+import { dijkstraPath, adjacentTilesForFootprint, type PathResult } from "./pathfinding";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -14,6 +14,12 @@ const MAX_SIM_SECONDS = 180;        // hard cap: 3-minute raid
 
 const SPEED_DIVISOR = 16;
 const GRID_SIZE     = 44;
+
+// Wall pathfinding V2
+/** Path-cost ratio above which breaking a wall is preferred over a long detour. */
+const DETOUR_RATIO   = 2.0;
+/** Ticks a troop stays locked on a chosen wall before re-evaluating (≈ 1 s). */
+const WALL_LOCK_TICKS = 10;
 
 // Eagle Artillery burst constants
 const EAGLE_BURST_SIZE     = 3;
@@ -300,11 +306,13 @@ interface TroopState {
   undergroundHistory:  boolean[];
   isEnraged:           boolean;  // true when Baby Dragon is alone (no allied air unit nearby)
   enragedHistory:      boolean[];
-  // Wall pathfinding
-  bfsPath:      Vec2[];       // remaining tile waypoints around walls
-  bfsTargetId:  string | null; // entity for which the path was computed
-  bfsWallVer:   number;        // wall-version when path was computed
-  wallAttackId: string | null; // wall being attacked when path is blocked
+  // Wall pathfinding V2
+  bfsPath:             Vec2[];        // remaining tile waypoints
+  bfsTargetId:         string | null; // entity for which path was computed
+  bfsWallVer:          number;        // wallVersion when path was computed
+  bfsPathCost:         number;        // Dijkstra cost of cached path
+  wallAttackId:        string | null; // wall currently being attacked
+  wallAttackLockTimer: number;        // ticks remaining in wall-lock (stability)
   deathDamage:             number;   // damage per death-lightning bolt (Electro Dragon)
   deathLightningPending:   { fireAt: number; position: Vec2 }[];
   deathLightningTriggered: boolean;
@@ -493,10 +501,12 @@ export function simulateAttack(
       undergroundHistory: [],
       isEnraged:          false,
       enragedHistory:     [],
-      bfsPath:      [],
-      bfsTargetId:  null,
-      bfsWallVer:   -1,
-      wallAttackId: null,
+      bfsPath:             [],
+      bfsTargetId:         null,
+      bfsWallVer:          -1,
+      bfsPathCost:         0,
+      wallAttackId:        null,
+      wallAttackLockTimer: 0,
       chainMaxTargets:    troopData.chainMaxTargets ?? 0,
       chainFalloff:       troopData.chainFalloff    ?? 1,
       chainRange:         troopData.chainRange      ?? 0,
@@ -616,6 +626,28 @@ export function simulateAttack(
     for (const [, w] of walls) if (w.alive) s.add(`${w.x},${w.y}`);
     return s;
   }
+
+  /**
+   * Picks the wall that minimises (troop→wall) + (wall→target).
+   * Falls back to nearest wall if nothing qualifies on the direct line.
+   */
+  function pickBestWall(troopPos: Vec2, targetPos: Vec2): string | null {
+    let bestId: string | null = null;
+    let bestCost = Infinity;
+    for (const [id, w] of walls) {
+      if (!w.alive) continue;
+      const wx = w.x + 0.5, wy = w.y + 0.5;
+      const c = euclidean(troopPos, { x: wx, y: wy })
+              + euclidean({ x: wx, y: wy }, targetPos);
+      if (c < bestCost) { bestCost = c; bestId = id; }
+    }
+    return bestId;
+  }
+
+  // Per-wallVersion BFS cache (cleared whenever wallVersion increments).
+  // Key = "fromX,fromY|targetId|wallVer"
+  let pathCacheVersion = -1;
+  const pathCache = new Map<string, PathResult | null>();
 
   // -------------------------------------------------------------------------
   // 2. Targeting helpers (closures over state maps)
@@ -1276,83 +1308,96 @@ export function simulateAttack(
           troop.attackCooldown = effectiveAttackSpeed;
         }
       } else if (troop.wallAttackId !== null) {
-        // ── Attacking a blocking wall ─────────────────────────────────────
+        // ── Attacking a locked wall ───────────────────────────────────────
         const wall = walls.get(troop.wallAttackId);
         if (!wall || !wall.alive) {
-          troop.wallAttackId = null;
-          troop.bfsPath      = [];   // will recompute next tick
+          // Wall died → force full replan
+          troop.wallAttackId        = null;
+          troop.wallAttackLockTimer = 0;
+          troop.bfsPath             = [];
+          troop.bfsWallVer          = -1;
         } else {
-          const wallCenter = { x: wall.x + 0.5, y: wall.y + 0.5 };
-          if (euclidean(troop.position, wallCenter) <= troop.attackRange + 0.5) {
-            troop.attackCooldown -= TICK;
-            if (troop.attackCooldown <= 0) {
-              const isEnragedBD = troop.troopId === "baby-dragon" && troop.isEnraged;
-              const effAS  = isEnragedBD ? troop.attackSpeed / 1.5 : troop.attackSpeed;
-              const effDps = isEnragedBD ? troop.dps * 2 : troop.dps;
-              const dmg    = effDps * effAS;
-              const actual = Math.min(dmg, wall.hp);
-              wall.hp -= actual;
-              if (wall.hp <= 0 && wall.alive) {
-                wall.hp = 0; wall.alive = false; wall.destroyedAt = simTime;
-                wallVersion++;
-              }
-              troop.attackCooldown = effAS;
-            }
+          // Decrement stability lock
+          if (troop.wallAttackLockTimer > 0) troop.wallAttackLockTimer--;
+
+          if (troop.wallAttackLockTimer === 0) {
+            // Lock expired → clear and let BFS re-decide next tick
+            troop.wallAttackId = null;
+            troop.bfsWallVer   = -1;
           } else {
-            troop.position = stepToward(troop.position, wallCenter, troop.speed * TICK);
+            // Still locked → attack the wall
+            const wallCenter = { x: wall.x + 0.5, y: wall.y + 0.5 };
+            if (euclidean(troop.position, wallCenter) <= troop.attackRange + 0.5) {
+              troop.attackCooldown -= TICK;
+              if (troop.attackCooldown <= 0) {
+                const isEnragedBD = troop.troopId === "baby-dragon" && troop.isEnraged;
+                const effAS  = isEnragedBD ? troop.attackSpeed / 1.5 : troop.attackSpeed;
+                const effDps = isEnragedBD ? troop.dps * 2 : troop.dps;
+                const actual = Math.min(effDps * effAS, wall.hp);
+                wall.hp -= actual;
+                if (wall.hp <= 0 && wall.alive) {
+                  wall.hp = 0; wall.alive = false; wall.destroyedAt = simTime;
+                  wallVersion++;
+                }
+                troop.attackCooldown = effAS;
+              }
+            } else {
+              troop.position = stepToward(troop.position, wallCenter, troop.speed * TICK);
+            }
           }
         }
       } else if (walls.size > 0 && !troop.isAirUnit && troop.troopId !== "miner") {
-        // ── BFS around walls ──────────────────────────────────────────────
+        // ── BFS + decision logic (V2) ─────────────────────────────────────
+
+        // Invalidate path cache when wallVersion changes
+        if (pathCacheVersion !== wallVersion) {
+          pathCache.clear();
+          pathCacheVersion = wallVersion;
+        }
+
         const needReplan =
           troop.bfsTargetId !== troop.targetId ||
-          troop.bfsWallVer  !== wallVersion     ||
-          (troop.bfsPath.length === 0 && troop.wallAttackId === null);
+          troop.bfsWallVer  !== wallVersion    ||
+          troop.bfsPath.length === 0;
 
         if (needReplan) {
           troop.bfsTargetId = troop.targetId;
           troop.bfsWallVer  = wallVersion;
           troop.bfsPath     = [];
-          const blocked = buildBlockedSet();
-          const fromTile = { x: Math.floor(troop.position.x), y: Math.floor(troop.position.y) };
+          troop.bfsPathCost = 0;
+
+          const fromTile  = { x: Math.floor(troop.position.x), y: Math.floor(troop.position.y) };
           const goalTiles = adjacentTilesForFootprint(
             targetEntity.position.x, targetEntity.position.y,
             (targetEntity as { size: number }).size ?? 1,
             GRID_SIZE,
           );
-          const path = bfsPath(fromTile, goalTiles, blocked, GRID_SIZE);
-          if (path === null) {
-            // Blocked — find the wall closest to the direct line toward the target
-            let bestId: string | null = null;
-            let bestD = Infinity;
-            const tx = targetEntity.position.x, ty = targetEntity.position.y;
-            const ddx = tx - troop.position.x, ddy = ty - troop.position.y;
-            const dlen = Math.sqrt(ddx*ddx + ddy*ddy) || 1;
-            for (const [id, w] of walls) {
-              if (!w.alive) continue;
-              const wx = w.x + 0.5, wy = w.y + 0.5;
-              const proj = ((wx - troop.position.x) * ddx + (wy - troop.position.y) * ddy) / dlen;
-              if (proj < 0) continue;
-              const perpD = Math.abs((wx - troop.position.x) * ddy - (wy - troop.position.y) * ddx) / dlen;
-              if (perpD > 2) continue;
-              const d = euclidean(troop.position, { x: wx, y: wy });
-              if (d < bestD) { bestD = d; bestId = id; }
-            }
-            // Fallback: just nearest wall
-            if (!bestId) {
-              for (const [id, w] of walls) {
-                if (!w.alive) continue;
-                const d = euclidean(troop.position, { x: w.x + 0.5, y: w.y + 0.5 });
-                if (d < bestD) { bestD = d; bestId = id; }
-              }
-            }
-            troop.wallAttackId = bestId;
-          } else {
-            troop.bfsPath      = path;
+
+          // Global path cache keyed by position + target + wallVersion
+          const cacheKey = `${fromTile.x},${fromTile.y}|${troop.targetId}|${wallVersion}`;
+          let result = pathCache.get(cacheKey);
+          if (result === undefined) {
+            result = dijkstraPath(fromTile, goalTiles, buildBlockedSet(), GRID_SIZE);
+            pathCache.set(cacheKey, result);
+          }
+
+          const directDist = euclidean(troop.position, targetEntity.position);
+
+          if (result !== null && result.cost <= directDist * DETOUR_RATIO) {
+            // ① Valid path AND detour is acceptable → follow it
+            troop.bfsPath     = result.path;
+            troop.bfsPathCost = result.cost;
             troop.wallAttackId = null;
+          } else {
+            // ② No path OR detour too long → pick best wall to break
+            const bestWallId = pickBestWall(troop.position, targetEntity.position);
+            troop.wallAttackId        = bestWallId;
+            troop.wallAttackLockTimer = bestWallId ? WALL_LOCK_TICKS : 0;
+            troop.bfsPath = [];
           }
         }
 
+        // ③ Follow BFS path waypoint-by-waypoint
         if (troop.bfsPath.length > 0) {
           const wp    = troop.bfsPath[0];
           const wpCtr = { x: wp.x + 0.5, y: wp.y + 0.5 };
@@ -1364,6 +1409,7 @@ export function simulateAttack(
             troop.position = stepToward(troop.position, wpCtr, step);
           }
         } else if (!troop.wallAttackId) {
+          // Fallback straight line (e.g. empty walls map or goal already adjacent)
           troop.position = stepToward(troop.position, targetEntity.position, troop.speed * TICK);
         }
       } else {
