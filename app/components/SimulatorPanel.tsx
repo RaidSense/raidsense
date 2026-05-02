@@ -247,6 +247,103 @@ function buildNeutralBuildingPlacements(placed: PlacedBuilding[]): BuildingPlace
 
 // ── SimulatorPanel ─────────────────────────────────────────────────────────
 
+// ── Test Scenarios ─────────────────────────────────────────────────────────
+// À supprimer après validation des mécaniques.
+
+interface TestScenario {
+  name:                string;
+  useManualPlacement?: boolean;
+  troopSlots:          TroopSlot[];
+  placed:              PlacedDefense[];
+  placedBuildings?:    PlacedBuilding[];
+  placedTroops?:       PlacedTroop[];
+}
+
+const _d = (id: string, defenseId: string, level: number, x: number, y: number, mode?: string): PlacedDefense =>
+  ({ instanceId: id, defenseId, level, x, y, ...(mode ? { mode } : {}) });
+
+const TEST_SCENARIOS: TestScenario[] = [
+  {
+    name: "Giant + Healers vs Canon",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",  level: 6, count: 4 },
+      { slotId: "s2", troopId: "healer", level: 3, count: 2 },
+    ],
+    placed: [_d("d1", "cannon", 10, 21, 20)],
+  },
+  {
+    name: "Dragon vs Défense Anti-Air",
+    troopSlots: [{ slotId: "s1", troopId: "dragon", level: 3, count: 2 }],
+    placed: [_d("d1", "air-defense", 8, 21, 20)],
+  },
+  {
+    name: "E-Dragon — chaîne bâtiments collés",
+    troopSlots: [{ slotId: "s1", troopId: "electro-dragon", level: 3, count: 1 }],
+    placed: [
+      _d("d1", "cannon", 8, 16, 20),
+      _d("d2", "cannon", 8, 19, 20),
+      _d("d3", "cannon", 8, 22, 20),
+      _d("d4", "cannon", 8, 25, 20),
+    ],
+  },
+  {
+    name: "E-Dragon — chaîne bâtiments espacés",
+    troopSlots: [{ slotId: "s1", troopId: "electro-dragon", level: 3, count: 1 }],
+    placed: [
+      _d("d1", "cannon", 8, 12, 20),
+      _d("d2", "cannon", 8, 21, 20),
+      _d("d3", "cannon", 8, 30, 20),
+    ],
+  },
+  {
+    name: "Miner vs Canon",
+    troopSlots: [{ slotId: "s1", troopId: "miner", level: 5, count: 4 }],
+    placed: [_d("d1", "cannon", 10, 21, 20)],
+  },
+  {
+    name: "Baby Dragon seul (enragé)",
+    troopSlots: [{ slotId: "s1", troopId: "baby-dragon", level: 5, count: 1 }],
+    placed: [_d("d1", "cannon", 10, 21, 20)],
+  },
+  {
+    name: "Baby Dragon + Dragon proche (non enragé)",
+    useManualPlacement: true,
+    troopSlots: [
+      { slotId: "s1", troopId: "baby-dragon", level: 5, count: 1 },
+      { slotId: "s2", troopId: "dragon",      level: 3, count: 1 },
+    ],
+    placed: [_d("d1", "air-defense", 8, 21, 20)],
+    placedTroops: [
+      { instanceId: "pt1", troopId: "baby-dragon", level: 5, x: 2, y: 20, deployAt: 0 },
+      { instanceId: "pt2", troopId: "dragon",      level: 3, x: 2, y: 22, deployAt: 0 },
+    ],
+  },
+  {
+    name: "Scattershot vs groupe de troupes",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",     level: 6, count: 6 },
+      { slotId: "s2", troopId: "barbarian", level: 8, count: 4 },
+    ],
+    placed: [_d("d1", "scattershot", 3, 20, 19)],
+  },
+  {
+    name: "Eagle Artillery — salve verrouillée",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",  level: 6, count: 4 },
+      { slotId: "s2", troopId: "wizard", level: 5, count: 3 },
+    ],
+    placed: [_d("d1", "eagle-artillery", 3, 20, 19)],
+  },
+  {
+    name: "Wizard Tower — splash vs troupes",
+    troopSlots: [
+      { slotId: "s1", troopId: "giant",     level: 5, count: 6 },
+      { slotId: "s2", troopId: "barbarian", level: 7, count: 6 },
+    ],
+    placed: [_d("d1", "wizard-tower", 8, 21, 20)],
+  },
+];
+
 export default function SimulatorPanel() {
   const [troopSlots, setTroopSlots] = useState<TroopSlot[]>([
     { slotId: "ts-0", troopId: "giant", level: 5, count: 5 },
@@ -607,6 +704,15 @@ export default function SimulatorPanel() {
     setShowReplay(false); setReplayPlaying(false); setReplayTime(0);
   }
 
+  function loadScenario(s: TestScenario) {
+    setTroopSlots(s.troopSlots);
+    setPlaced(s.placed);
+    setPlacedBuildings(s.placedBuildings ?? []);
+    setPlacedTroops(s.placedTroops ?? []);
+    setPlacementMode(s.useManualPlacement ?? false);
+    clearResult();
+  }
+
   function handlePlaceTroop(x: number, y: number) {
     if (!selectedSlotId) return;
     if (!isValidDeployTile(x, y, placed)) return;
@@ -923,6 +1029,24 @@ export default function SimulatorPanel() {
 
         </div>
       </div>
+
+      {/* ── Scénarios de test (temporaire) ──────────────────────────────── */}
+      <details className="rounded-xl border border-dashed border-yellow-600/40 bg-yellow-900/10 px-3 py-2 text-xs">
+        <summary className="cursor-pointer font-semibold text-yellow-400 select-none">
+          🧪 Scénarios de test
+        </summary>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {TEST_SCENARIOS.map((s) => (
+            <button
+              key={s.name}
+              onClick={() => loadScenario(s)}
+              className="rounded bg-yellow-800/50 px-2 py-1 text-yellow-200 hover:bg-yellow-700/60 transition-colors"
+            >
+              {s.name}
+            </button>
+          ))}
+        </div>
+      </details>
 
       {/* Simulate */}
       <button
