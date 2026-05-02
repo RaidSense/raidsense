@@ -5,6 +5,13 @@ import { TROOPS } from "../../lib/data/troops";
 import { DEFENSES } from "../../lib/data/defenses";
 import { NEUTRAL_BUILDINGS } from "../../lib/data/neutral-buildings";
 import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
+import {
+  createBestDeployment,
+  scoreSimResult,
+  type Strategy as OptStrategy,
+  type TroopTemplate,
+  type OptimizationResult,
+} from "../../lib/engine/optimizer";
 import type {
   SimulationResult,
   TroopDeployment,
@@ -493,6 +500,11 @@ export default function SimulatorPanel() {
   const [showRanges,      setShowRanges]      = useState<boolean>(false);
   const [showHeatmap,     setShowHeatmap]     = useState<boolean>(false);
   const [debugMode,       setDebugMode]       = useState<boolean>(false);
+  // Optimizer
+  const [isOptimizing,       setIsOptimizing]       = useState<boolean>(false);
+  const [optIterations,      setOptIterations]      = useState<number>(50);
+  const [optStrategy,        setOptStrategy]        = useState<OptStrategy>("random");
+  const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null);
   const [replayPlaying,   setReplayPlaying]   = useState<boolean>(false);
   const [replayTime,      setReplayTime]      = useState<number>(0);
   const [replaySpeed,     setReplaySpeed]     = useState<1 | 2>(1);
@@ -1087,6 +1099,44 @@ export default function SimulatorPanel() {
     setResult(r);
   }
 
+  async function handleOptimize() {
+    if ((!placed.length && !placedBuildings.length) || !totalTroops) return;
+    setIsOptimizing(true);
+    setOptimizationResult(null);
+    // Yield to React so the spinner renders before the blocking loop
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    try {
+      const templates: TroopTemplate[] = troopSlots.flatMap((slot) =>
+        Array.from({ length: slot.count }, (_, i) => ({
+          instanceId: `opt-${slot.slotId}-${i}`,
+          troopId:    slot.troopId,
+          level:      slot.level,
+        })),
+      );
+      const optResult = createBestDeployment(
+        templates,
+        buildDefensePlacements(placed),
+        buildNeutralBuildingPlacements(placedBuildings),
+        { iterations: optIterations, strategy: optStrategy },
+      );
+      setOptimizationResult(optResult);
+      // Apply best deployment as manual placement
+      const bestTroops: PlacedTroop[] = optResult.best.deployments.map((d) => ({
+        instanceId: d.instanceId,
+        troopId:    d.troopId,
+        level:      d.level,
+        x:          d.dropPosition.x,
+        y:          d.dropPosition.y,
+        deployAt:   d.deployAt ?? 0,
+      }));
+      setPlacedTroops(bestTroops);
+      setPlacementMode(true);
+      clearResult();
+    } finally {
+      setIsOptimizing(false);
+    }
+  }
+
   function startReplay() {
     setReplayTime(0);
     setReplayPlaying(true);
@@ -1242,6 +1292,73 @@ export default function SimulatorPanel() {
 
         </div>
       </div>
+
+      {/* ── Optimiseur de placement ──────────────────────────────────────── */}
+      {(placed.length > 0 || placedBuildings.length > 0) && totalTroops > 0 && (
+        <div className="rounded-xl border border-purple-800/50 bg-purple-950/20 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-purple-300">⚡ Optimiseur de placement</span>
+            <select
+              value={optIterations}
+              onChange={(e) => setOptIterations(Number(e.target.value))}
+              className="text-xs bg-[#0d0d1a] text-purple-300 border border-purple-800/60 rounded px-1.5 py-0.5"
+            >
+              {[20, 50, 100, 200].map((n) => (
+                <option key={n} value={n}>{n} iter.</option>
+              ))}
+            </select>
+          </div>
+          {/* Strategy selector */}
+          <div className="flex gap-1">
+            {(["random", "spread", "grouped"] as const).map((s) => (
+              <button key={s} onClick={() => setOptStrategy(s)}
+                className={`flex-1 text-xs py-1 rounded border transition-colors capitalize ${
+                  optStrategy === s
+                    ? "border-purple-500/70 bg-purple-500/20 text-purple-200"
+                    : "border-slate-700/50 text-slate-500 hover:text-slate-300"
+                }`}
+              >{s}</button>
+            ))}
+          </div>
+          <button
+            onClick={handleOptimize}
+            disabled={isOptimizing}
+            className="w-full rounded-lg py-2 text-xs font-semibold bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-40 transition-colors"
+          >
+            {isOptimizing ? `⏳ Optimisation en cours…` : "Suggérer le meilleur placement"}
+          </button>
+          {optimizationResult && (
+            <div className="text-xs space-y-1 pt-1 border-t border-purple-800/40">
+              <div className="flex justify-between">
+                <span className="text-purple-400">Score</span>
+                <span className="text-white font-bold">{Math.round(optimizationResult.best.score)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-purple-400">Défenses détruites</span>
+                <span className="text-white">
+                  {Object.values(optimizationResult.best.simResult.defenses).filter((d) => d.destroyedAt !== null).length
+                   + Object.values(optimizationResult.best.simResult.buildings).filter((b) => b.destroyedAt !== null).length}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-purple-400">Troupes survivantes</span>
+                <span className="text-white">
+                  {Object.values(optimizationResult.best.simResult.troops).filter((t) => t.destroyedAt === null).length}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-500">
+                <span>{optimizationResult.testedCount} placements testés</span>
+                <span>moy. {optimizationResult.avgScore}</span>
+              </div>
+              {optimizationResult.top3.length > 1 && (
+                <div className="text-slate-600 text-xs">
+                  Top 3 scores : {optimizationResult.top3.map((c) => Math.round(c.score)).join(" · ")}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Scénarios de test (temporaire) ──────────────────────────────── */}
       <details className="rounded-xl border border-dashed border-yellow-600/40 bg-yellow-900/10 px-3 py-2 text-xs">
