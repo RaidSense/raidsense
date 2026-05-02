@@ -321,7 +321,412 @@ const p10: BasePreset = {
   ]),
 };
 
-export const BASE_PRESETS: BasePreset[] = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10];
+// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════  BASES STRATÉGIQUES (construites par un base-builder) ════════
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  Méthode :
+//  1. Core défini (Eagle / Inferno / Scatter)
+//  2. Ring(s) de murs autour du core
+//  3. Défenses mid-layer entre rings
+//  4. Compartiments / funnel extérieurs
+//  5. Bâtiments neutres = ralentisseurs + faux objectifs
+//  6. Ouverture(s) piège(s)
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Base A : "Blindspot Core" ─────────────────────────────────────────────────
+//
+//  INTENTION :
+//    L'Eagle Artillery est enfouie derrière 2 rings de murs asymétriques.
+//    Il n'existe pas de ligne droite vers le core.
+//    L'entrée "facile" (gap sud) mène en réalité sous le feu croisé de
+//    l'Inferno Tower et de la Scattershot avant même d'atteindre le premier ring.
+//
+//  FLOW D'ATTAQUE :
+//    Troupes déployées en bas → voient des Gold Mines et Army Camp au sud →
+//    s'approchent par le gap sud → traversent la zone de Scattershot (mid-layer) →
+//    doivent briser le ring intérieur → Eagle Artillery et Inferno Tower achèvent.
+//
+//  PIÈGE PRINCIPAL :
+//    Le gap à x=19-22 (bas) semble mener droit au core.
+//    En réalité, une Scattershot est positionnée à y=24 côté gauche.
+//    Les troupes regroupées pour franchir le mur sont ravagées par le splash.
+
+const pA: BasePreset = (() => {
+  const D = (id: string, defenseId: string, level: number, x: number, y: number, mode?: string): PresetDefense =>
+    ({ instanceId: `A-d-${id}`, defenseId, level, x, y, ...(mode ? { mode } : {}) });
+  const B = (id: string, buildingId: string, level: number, x: number, y: number): PresetBuilding =>
+    ({ instanceId: `A-b-${id}`, buildingId, level, x, y });
+
+  const walls = dedupeWalls([
+    // Ring intérieur (1 case de clearance autour de l'Eagle 4×4 à (19,17))
+    // Eagle : x=19-22, y=17-20  →  ring : createWallRect(17,15,8,8)
+    ...createWallRect(17, 15, 8, 8, 12, "A-ri"),
+
+    // Ring extérieur — ouverture piège au bas centre (gap x=19-22)
+    ...createWallLine(11, 10, 31, 10, 10, "A-rt"),   // top
+    ...createWallLine(11, 10, 11, 30, 10, "A-rl"),   // left
+    ...createWallLine(31, 10, 31, 30, 10, "A-rr"),   // right
+    ...createWallLine(11, 30, 17, 30, 10, "A-rbl"),  // bottom-left  (gap x=18-22)
+    ...createWallLine(23, 30, 31, 30, 10, "A-rbr"),  // bottom-right (gap x=18-22)
+
+    // Chicane interne gauche : détournement après entrée du gap
+    ...createWallLine(14, 26, 14, 23, 10, "A-cl"),
+    ...createWallLine(14, 23, 17, 23, 10, "A-cl2"),
+  ]);
+
+  return {
+    id: "blindspot-core", name: "A. Blindspot Core",
+    description: "Eagle enterrée derrière 2 rings. L'entrée facile en bas cache une Scattershot. Toute troupe groupée y est anéantie.",
+    defenses: [
+      D("e",  "eagle-artillery", 4, 19, 17),         // CORE — Eagle 4×4 (19-22,17-20)
+      D("it", "inferno-tower",   6, 25, 17, "single"),// mid-right — Inferno (25-27,17-19)
+      D("ad1","air-defense",     9, 13, 17),          // mid-left  — AD (13-15,17-19)
+      D("ad2","air-defense",     9, 19, 11),          // mid-top   — AD (19-21,11-13)
+      D("sc", "scattershot",     3, 12, 24),          // mid-left  — Scatter (12-15,24-27)
+      D("wt", "wizard-tower",    8, 25, 24),          // mid-right — Wizard (25-27,24-26)
+      D("mo", "mortar",          8, 25, 11),          // mid-top-r — Mortar (25-27,11-13)
+      D("ca", "cannon",          12,13, 11),          // mid-top-l — Cannon (13-15,11-13)
+      D("at1","archer-tower",    10, 7, 18),          // périphérie gauche
+      D("ca2","cannon",          10,34, 18),          // périphérie droite
+    ],
+    buildings: [
+      B("ac", "army-camp",          4,  7,  7),   // coin NW — appât
+      B("gm1","gold-mine",          6, 33,  7),   // coin NE
+      B("gm2","gold-mine",          6,  7, 31),   // coin SW
+      B("ec", "elixir-collector",   6, 33, 31),   // coin SE
+      B("ba", "barracks",           5,  7, 13),   // bord W nord
+      B("db", "dark-barracks",      4, 34, 13),   // bord E nord
+      B("cl", "clan-castle",        5,  7, 25),   // bord W sud
+      B("gs", "gold-storage",       7, 34, 25),   // bord E sud
+      B("bh", "builder-hut",        1, 28, 11),   // mid-layer coin haut-droit
+      B("la", "laboratory",         6, 28, 26),   // mid-layer coin bas-droit
+    ],
+    walls,
+  };
+})();
+
+// ── Base B : "The Corral" ──────────────────────────────────────────────────────
+//
+//  INTENTION :
+//    Funnel en forme de U ouvert au bas. Les bâtiments-appâts (Gold Mines,
+//    Army Camp) au sud attirent les troupes dans le couloir. La Scattershot
+//    et le Wizard Tower les attendent en haut du funnel.
+//
+//  FLOW D'ATTAQUE :
+//    Troupes déployées en bas → visent les ressources (Gold Mine, Army Camp) →
+//    avancent dans le couloir → murs latéraux les compriment → Scatter + Wizard
+//    dévastent l'amas dans le funnel → Eagle/Inferno finissent le reste en hauteur.
+//
+//  PIÈGE PRINCIPAL :
+//    Le bas est totalement ouvert mais le couloir rétrécit à x=17-25.
+//    Les troupes qui entrent groupées se retrouvent dans le rayon splash
+//    de la Scattershot à 50% de la course.
+
+const pB: BasePreset = (() => {
+  const D = (id: string, defenseId: string, level: number, x: number, y: number, mode?: string): PresetDefense =>
+    ({ instanceId: `B-d-${id}`, defenseId, level, x, y, ...(mode ? { mode } : {}) });
+  const B = (id: string, buildingId: string, level: number, x: number, y: number): PresetBuilding =>
+    ({ instanceId: `B-b-${id}`, buildingId, level, x, y });
+
+  const walls = dedupeWalls([
+    // Bras gauche du funnel : grande paroi verticale + crochet intérieur
+    ...createWallLine(10, 30, 10, 13, 10, "B-fl"),   // x=10, y=13-30
+    ...createWallLine(10, 13, 18, 13, 10, "B-ftl"),  // y=13, x=10-17 (crochet haut gauche)
+
+    // Bras droit du funnel
+    ...createWallLine(33, 30, 33, 13, 10, "B-fr"),
+    ...createWallLine(25, 13, 33, 13, 10, "B-ftr"),  // y=13, x=25-33
+
+    // Box intérieure (kill zone) : Scatter + Wizard à l'intérieur
+    ...createWallRect(17, 8, 9, 6, 12, "B-kz"),     // x=17-25, y=8-13 (kill-zone walls)
+
+    // Mur de compartiment secondaire (Eagle/Inferno derrière)
+    ...createWallRect(19, 5, 5, 4, 12, "B-core"),   // x=19-23, y=5-8
+
+    // Chicane au tiers du funnel pour briser la ligne droite
+    ...createWallLine(14, 21, 19, 21, 10, "B-chL"),
+    ...createWallLine(24, 21, 29, 21, 10, "B-chR"),
+  ]);
+
+  return {
+    id: "the-corral", name: "B. The Corral",
+    description: "Funnel ouvert au sud. Ressources-appâts attirent les troupes dans le couloir. Scattershot les attend au centre.",
+    defenses: [
+      D("sc",  "scattershot",     3, 18, 14),          // kill zone — Scatter (18-21,14-17)
+      D("wt",  "wizard-tower",    8, 22, 15),          // kill zone — Wizard (22-24,15-17)
+      D("ea",  "eagle-artillery", 4, 19,  5),          // deep core — Eagle (19-22,5-8)
+      D("it",  "inferno-tower",   6, 26, 14, "multi"), // right of kz — Inferno (26-28,14-16)
+      D("ca1", "cannon",          12,13, 14),          // left of kz — Cannon (13-15,14-16)
+      D("ad1", "air-defense",     9, 13,  8),          // upper-left — AD (13-15,8-10)
+      D("ad2", "air-defense",     9, 25,  8),          // upper-right — AD (25-27,8-10)
+      D("mo",  "mortar",          8, 13, 25),          // funnel-left — Mortar
+      D("ca2", "cannon",          12,27, 25),          // funnel-right
+      D("at1", "archer-tower",    10, 7, 16),          // outside funnel left
+      D("at2", "archer-tower",    10,35, 16),          // outside funnel right
+    ],
+    buildings: [
+      // Appâts dans le funnel (attirent les troupes)
+      B("gm1","gold-mine",        6, 14, 31),
+      B("gm2","gold-mine",        6, 25, 31),
+      B("ec1","elixir-collector", 6, 19, 33),
+      B("ac", "army-camp",        4,  7, 31),   // grand appât côté gauche
+      // Côtés extérieurs du funnel
+      B("db", "dark-barracks",    4,  7,  8),
+      B("ba", "barracks",         5, 35,  8),
+      B("gs", "gold-storage",     7, 35, 26),
+      B("ds", "dark-elixir-storage",5, 7,26),
+      // Core area (entre bras et kill-zone)
+      B("cl", "clan-castle",      5,  7, 22),
+      B("bh", "builder-hut",      1, 35, 22),
+    ],
+    walls,
+  };
+})();
+
+// ── Base C : "Air Grid" ────────────────────────────────────────────────────────
+//
+//  INTENTION :
+//    Conçue pour résister aux Dragons, Baby Dragons et E-Dragons.
+//    3 Air Defenses en triangle avec couverture de portée croisée.
+//    Les bâtiments sont espacés pour briser les chaînes de l'Electro Dragon
+//    (>1 tile entre les footprints).
+//    Les Army Camps en périphérie forcent les unités aériennes à s'approcher
+//    des AD avant de pouvoir atteindre le core.
+//
+//  FLOW D'ATTAQUE :
+//    Dragons deployés en périphérie → visent les Army Camps ou buildings proches →
+//    s'approchent → entrent dans la portée des 3 AD → Eagle Artillery cible
+//    les gros HP → les Archers terminent les rescapés.
+//
+//  PIÈGE PRINCIPAL :
+//    Les 3 AD forment un triangle offensif : attaquer l'une d'elles signifie
+//    être dans la portée des deux autres. Il n'existe pas de position "safe" sur la base.
+
+const pC: BasePreset = (() => {
+  const D = (id: string, defenseId: string, level: number, x: number, y: number, mode?: string): PresetDefense =>
+    ({ instanceId: `C-d-${id}`, defenseId, level, x, y, ...(mode ? { mode } : {}) });
+  const B = (id: string, buildingId: string, level: number, x: number, y: number): PresetBuilding =>
+    ({ instanceId: `C-b-${id}`, buildingId, level, x, y });
+
+  const walls = dedupeWalls([
+    // Ring autour de l'Eagle central
+    ...createWallRect(18, 17, 7, 7, 12, "C-core"),   // Eagle (19-22,18-21) avec 1 case clearance
+
+    // Petits rings protégeant chaque AD
+    ...createWallRect(9,  9,  5, 5, 10, "C-ad1"),    // AD1 (10-12,10-12) ring autour
+    ...createWallRect(29, 9,  5, 5, 10, "C-ad2"),    // AD2 (30-32,10-12) ring autour
+    ...createWallRect(19, 28, 5, 5, 10, "C-ad3"),    // AD3 (20-22,29-31) ring autour
+
+    // Liaisons entre rings pour forcer le détour
+    ...createWallLine(14,  9, 14, 14, 10, "C-l1"),
+    ...createWallLine(29,  9, 29, 14, 10, "C-l2"),
+    ...createWallLine(14, 14, 18, 14, 10, "C-l3"),
+    ...createWallLine(25, 14, 28, 14, 10, "C-l4"),
+  ]);
+
+  return {
+    id: "air-grid", name: "C. Air Grid",
+    description: "3 Air Defenses en triangle à couverture croisée. Aucune position safe en dehors du triangle. E-Dragon chaîne impossible grâce aux gaps.",
+    defenses: [
+      D("ea",  "eagle-artillery", 4, 19, 18),          // CORE — Eagle (19-22,18-21)
+      D("ad1", "air-defense",    10, 10, 10),           // triangle NW — AD (10-12,10-12)
+      D("ad2", "air-defense",    10, 30, 10),           // triangle NE — AD (30-32,10-12)
+      D("ad3", "air-defense",    10, 20, 29),           // triangle S  — AD (20-22,29-31)
+      D("it",  "inferno-tower",   6, 15, 18, "multi"),  // mid-left — Inferno (15-17,18-20)
+      D("wt",  "wizard-tower",    8, 25, 18),           // mid-right — Wizard (25-27,18-20)
+      D("ca1", "cannon",          12,15, 24),           // lower-left
+      D("ca2", "cannon",          12,25, 24),           // lower-right
+      D("at1", "archer-tower",    10, 7, 19),           // far left
+      D("at2", "archer-tower",    10,35, 19),           // far right
+      D("mo",  "mortar",           8, 19, 14),          // central north
+    ],
+    buildings: [
+      // Army Camps : appâts extérieurs pour air units
+      B("ac1","army-camp",        4,  7,  7),   // coin NW  (taille 4×4)
+      B("ac2","army-camp",        4, 32,  7),   // coin NE
+      B("ac3","army-camp",        4,  7, 31),   // coin SW
+      B("ac4","army-camp",        4, 32, 31),   // coin SE
+      // Buildings entre compartiments (briseurs de chaîne E-Dragon)
+      B("gm1","gold-mine",        6, 16, 14),   // entre core et AD NW
+      B("gm2","gold-mine",        6, 25, 14),   // entre core et AD NE
+      B("bh1","builder-hut",      1, 16, 26),   // entre core et AD S gauche
+      B("bh2","builder-hut",      1, 25, 26),   // entre core et AD S droite
+      B("cl", "clan-castle",      5, 19, 24),   // devant AD S (force ciblage)
+      B("gs", "gold-storage",     7, 15,  8),   // zone NW mid
+      B("ec", "elixir-collector", 6, 27,  8),   // zone NE mid
+    ],
+    walls,
+  };
+})();
+
+// ── Base D : "Labyrinth" ───────────────────────────────────────────────────────
+//
+//  INTENTION :
+//    5 compartiments hermétiques. Chaque compartiment contient une défense et
+//    est scellé par des murs. Pour avancer, les troupes doivent casser au moins
+//    1 mur par section. Elles perdent 20-30 secondes de simulation par compartiment.
+//
+//  FLOW D'ATTAQUE :
+//    Troupes en périphérie → attaquent compartiment 1 (Cannon) → cassent le mur →
+//    avancent → Mortar tire depuis compartiment 2 → new wall → etc.
+//    Eagle Artillery au centre (compartiment 5) est la dernière cible.
+//
+//  PIÈGE PRINCIPAL :
+//    Le Scattershot est positionné dans le compartiment 3 (central droite).
+//    Les troupes qui ont cassé les murs des compartiments 1 et 2 arrivent
+//    regroupées — parfait pour le splash Scattershot.
+
+const pD: BasePreset = (() => {
+  const D = (id: string, defenseId: string, level: number, x: number, y: number, mode?: string): PresetDefense =>
+    ({ instanceId: `D-d-${id}`, defenseId, level, x, y, ...(mode ? { mode } : {}) });
+  const B = (id: string, buildingId: string, level: number, x: number, y: number): PresetBuilding =>
+    ({ instanceId: `D-b-${id}`, buildingId, level, x, y });
+
+  const walls = dedupeWalls([
+    // Compartiment 1 — NW (Cannon) : ring 7×7 autour de (11,10)
+    ...createWallRect(9, 9, 7, 7, 9, "D-c1"),        // (9-15,9-15) — Cannon à (11,11) = 11-13,11-13
+
+    // Compartiment 2 — NE (Air Defense) : ring autour de (27,10)
+    ...createWallRect(26, 9, 7, 7, 9, "D-c2"),       // (26-32,9-15) — AD à (28,11) = 28-30,11-13
+
+    // Compartiment 3 — E  (Scattershot) : ring 8×8
+    ...createWallRect(27, 17, 8, 8, 10, "D-c3"),     // (27-34,17-24) — Scatter à (28,18)=28-31,18-21
+
+    // Compartiment 4 — SW (Mortar + Wizard)
+    ...createWallRect(8, 18, 8, 8, 9, "D-c4"),       // (8-15,18-25) — Mortar à (10,20)
+
+    // Compartiment 5 — CORE (Eagle + Inferno)
+    ...createWallRect(17, 17, 9, 9, 12, "D-c5"),     // (17-25,17-25) — Eagle à (19,19) 4×4 = 19-22,19-22
+
+    // Couloirs entre compartiments (connexions)
+    ...createWallLine(15, 12, 26, 12, 9, "D-con1"),  // liaison C1-C2
+    ...createWallLine(17, 15, 17, 17, 9, "D-con2"),  // liaison C1-CORE gauche
+    ...createWallLine(25, 15, 25, 17, 9, "D-con3"),  // liaison C2-CORE droite
+    ...createWallLine(15, 25, 15, 27, 9, "D-con4"),  // liaison C4-bas
+    ...createWallLine(25, 25, 27, 25, 9, "D-con5"),  // liaison CORE-C3 bas
+  ]);
+
+  return {
+    id: "labyrinth", name: "D. Labyrinth",
+    description: "5 compartiments hermétiques. Chaque salle coûte 20-30s. Eagle au centre = dernière cible. Scattershot piège les troupes groupées au compartiment 3.",
+    defenses: [
+      D("ca1","cannon",          12,11, 11),          // C1 NW — Cannon (11-13,11-13)
+      D("ad", "air-defense",      9,28, 11),          // C2 NE — AD (28-30,11-13)
+      D("sc", "scattershot",      3,28, 18),          // C3 E  — Scatter (28-31,18-21)
+      D("mo", "mortar",           8,10, 20),          // C4 SW — Mortar (10-12,20-22)
+      D("ea", "eagle-artillery",  4,19, 19),          // C5 CORE — Eagle (19-22,19-22)
+      D("it", "inferno-tower",    6,19, 11, "single"),// entre C1/C2 — Inferno (19-21,11-13)
+      D("wt", "wizard-tower",     8,10, 12),          // C4 nord — Wizard (10-12,12-14)
+      D("ca2","cannon",          12,34, 20),          // périphérie E
+      D("at1","archer-tower",    10, 7,  7),          // coin NW extérieur
+      D("at2","archer-tower",    10,35,  7),          // coin NE extérieur
+    ],
+    buildings: [
+      B("ac1","army-camp",        4,  7, 27),   // bord W bas — appât
+      B("ac2","army-camp",        4, 32, 27),   // bord E bas
+      B("gm1","gold-mine",        6,  7, 17),   // bord W mid (hors C4)
+      B("gm2","gold-mine",        6, 35, 12),   // bord E haut
+      B("ec1","elixir-collector", 6, 19, 33),   // bas centre — appât
+      B("ec2","elixir-collector", 6,  9, 31),   // bas gauche
+      B("cl", "clan-castle",      5, 27, 31),   // bas droit
+      B("gs", "gold-storage",     7, 33, 31),   // coin SE
+      B("bh1","builder-hut",      1, 16,  9),   // entre C1-C2 haut
+      B("bh2","builder-hut",      1, 35, 27),   // bord E bas
+      B("la", "laboratory",       6,  7, 33),   // coin SW
+    ],
+    walls,
+  };
+})();
+
+// ── Base E : "The Hybrid" ──────────────────────────────────────────────────────
+//
+//  INTENTION :
+//    Base réaliste de type War/Legend League HDV14.
+//    Core central protégé par 1 ring solide avec Eagle + Inferno.
+//    Air Defenses placées en cross (N, S, E, W du ring) pour couverture totale.
+//    Bâtiments neutres répartis naturellement comme une vraie base.
+//    Funnel partiel au nord crée un piège pour les troupes terrestres.
+//
+//  FLOW D'ATTAQUE :
+//    Troupes terrestres : attaquent les buildings au sud → mur extérieur →
+//    contournent vers l'est (funnel nord) → Scattershot en haut couvre l'entrée →
+//    les survivants font face au core Eagle + Inferno.
+//    Troupes aériennes : 4 AD en cross signifie toujours être sous le feu d'au moins 2.
+//
+//  PIÈGE PRINCIPAL :
+//    Le mur funnel nord guide les attaquants terrestres vers la Scattershot.
+//    La base semble "ouverte" à l'est mais c'est une zone couverte par Wizard + AD.
+
+const pE: BasePreset = (() => {
+  const D = (id: string, defenseId: string, level: number, x: number, y: number, mode?: string): PresetDefense =>
+    ({ instanceId: `E-d-${id}`, defenseId, level, x, y, ...(mode ? { mode } : {}) });
+  const B = (id: string, buildingId: string, level: number, x: number, y: number): PresetBuilding =>
+    ({ instanceId: `E-b-${id}`, buildingId, level, x, y });
+
+  const walls = dedupeWalls([
+    // Ring core (Eagle + Inferno inside)
+    // Eagle 4×4 à (19,19) = 19-22,19-22 ; Inferno 3×3 à (23,20) = 23-25,20-22
+    // Clearance de 1 autour des deux = ring de (17,18) à (27,23) → createWallRect(17,18,11,6)
+    ...createWallRect(17, 18, 11, 6, 12, "E-core"),  // (17-27, 18-23)
+
+    // Compartiment nord (Scattershot piège)
+    ...createWallRect(16, 9, 11, 10, 10, "E-north"),  // (16-26,9-18) autour du Scatter
+
+    // Mur EST séparant la zone mid-east
+    ...createWallLine(28, 10, 28, 32, 10, "E-emid"),
+
+    // Demi-ring SUD (compartiment ressources)
+    ...createWallLine(11, 32, 11, 27, 9, "E-sl"),
+    ...createWallLine(11, 32, 32, 32, 9, "E-sb"),
+    ...createWallLine(32, 32, 32, 27, 9, "E-sr"),
+
+    // Jonctions NW-NE pour guider les troupes vers le funnel nord
+    ...createWallLine(11, 10, 11, 18, 9, "E-fnw"),  // bord NW vertical
+    ...createWallLine(11, 10, 16, 10, 9, "E-fnt"),  // jonction vers ring nord
+  ]);
+
+  return {
+    id: "the-hybrid", name: "E. The Hybrid",
+    description: "Base War réaliste HDV14. Core Eagle + Inferno. 4 AD en cross. Funnel nord piège vers Scattershot. Ouverture est = zone couverte par Wizard + AD.",
+    defenses: [
+      D("ea",  "eagle-artillery",  4, 19, 19),          // CORE — Eagle (19-22,19-22)
+      D("it",  "inferno-tower",    6, 23, 20, "single"), // CORE — Inferno (23-25,20-22)
+      D("sc",  "scattershot",      3, 18, 10),          // funnel nord — Scatter (18-21,10-13)
+      D("ad1", "air-defense",     10, 19, 14),          // N du core — AD (19-21,14-16)
+      D("ad2", "air-defense",     10, 19, 25),          // S du core — AD (19-21,25-27)
+      D("ad3", "air-defense",     10, 12, 20),          // W du core — AD (12-14,20-22)
+      D("ad4", "air-defense",     10, 29, 20),          // E du core (zone "ouverte") — AD
+      D("wt",  "wizard-tower",     8, 29, 14),          // NE — Wizard (29-31,14-16)
+      D("mo",  "mortar",           8, 12, 25),          // SW
+      D("ca1", "cannon",          12, 12, 14),          // NW
+      D("ca2", "cannon",          12, 29, 26),          // SE
+      D("at1", "archer-tower",    10,  7, 20),          // far W
+      D("at2", "archer-tower",    10, 35, 20),          // far E
+    ],
+    buildings: [
+      // Sud (appâts principaux pour troupes terrestres)
+      B("ac1","army-camp",        4, 12, 34),
+      B("ac2","army-camp",        4, 26, 34),
+      B("gm1","gold-mine",        6, 19, 34),
+      B("ec1","elixir-collector", 6,  7, 27),
+      B("ec2","elixir-collector", 6, 35, 27),
+      // Nord (derrière le ring nord, briseurs de ligne)
+      B("db", "dark-barracks",    4,  7,  9),
+      B("ba", "barracks",         5, 33,  9),
+      B("cl", "clan-castle",      5, 13,  9),
+      B("la", "laboratory",       6, 29,  9),
+      // Mid-east (zone "ouverte" mais couverte par AD4 + Wizard)
+      B("gs", "gold-storage",     7, 30,  9),
+      B("ds", "dark-elixir-storage",5,  7,33),
+      B("bh", "builder-hut",      1, 33, 33),
+    ],
+    walls,
+  };
+})();
+
+export const BASE_PRESETS: BasePreset[] = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, pA, pB, pC, pD, pE];
 
 // Validate all presets on module load (dev-time warnings only)
 if (process.env.NODE_ENV !== "production") {
