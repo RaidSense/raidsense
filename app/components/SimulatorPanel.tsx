@@ -1488,14 +1488,11 @@ function BattleGrid({
               if (link.targetInstId === d.instanceId) hp -= link.damage;
             }
           }
-          // Baby Dragon fireball: apply at visual impact time
+          // Baby Dragon fireball sub-second damage (same convention as chainEvents: at ev.time)
           for (const ev of replayResult.troopFireEvents ?? []) {
             if (ev.time > rt) break;
             if (ev.targetInstId !== d.instanceId) continue;
-            const dx = ev.to.x - ev.from.x;
-            const dy = ev.to.y - ev.from.y;
-            const impactTime = ev.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
-            if (impactTime > s && impactTime <= rt) hp -= ev.damage;
+            if (ev.time > s && ev.time <= rt) hp -= ev.damage;
           }
           hp = Math.max(0, hp);
           const pct = Math.max(0, Math.min(1, hp / maxHp));
@@ -1531,14 +1528,11 @@ function BattleGrid({
               if (link.targetInstId === b.instanceId) hp -= link.damage;
             }
           }
-          // Baby Dragon fireball: apply at visual impact time
+          // Baby Dragon fireball sub-second damage (at ev.time, same as chainEvents)
           for (const ev of replayResult.troopFireEvents ?? []) {
             if (ev.time > rt) break;
             if (ev.targetInstId !== b.instanceId) continue;
-            const dx = ev.to.x - ev.from.x;
-            const dy = ev.to.y - ev.from.y;
-            const impactTime = ev.time + Math.sqrt(dx * dx + dy * dy) / PROJECTILE_SPEED;
-            if (impactTime > s && impactTime <= rt) hp -= ev.damage;
+            if (ev.time > s && ev.time <= rt) hp -= ev.damage;
           }
           hp = Math.max(0, hp);
           const pct = Math.max(0, Math.min(1, hp / maxHp));
