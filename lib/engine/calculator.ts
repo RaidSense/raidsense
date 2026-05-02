@@ -1135,12 +1135,18 @@ export function simulateAttack(
       if (troop.troopId === "electro-dragon" && !troop.alive && !troop.deathLightningTriggered && troop.deathDamage > 0) {
         troop.deathLightningTriggered = true;
         const baseTime = troop.destroyedAt ?? simTime;
+        // Centre la dispersion sur la dernière cible (là où la défense se trouve),
+        // pas sur le dragon qui meurt loin derrière.
+        const lastTarget = troop.targetId
+          ? (defenses.get(troop.targetId) ?? buildings.get(troop.targetId))
+          : null;
+        const scatterCenter = lastTarget ? lastTarget.position : troop.position;
         for (let i = 0; i < DEATH_LIGHTNING_COUNT; i++) {
           const angle = Math.random() * 2 * Math.PI;
           const r     = Math.random() * DEATH_LIGHTNING_SPREAD;
           troop.deathLightningPending.push({
             fireAt:   baseTime + DEATH_LIGHTNING_DELAY + i * DEATH_LIGHTNING_INTERVAL,
-            position: { x: troop.position.x + Math.cos(angle) * r, y: troop.position.y + Math.sin(angle) * r },
+            position: { x: scatterCenter.x + Math.cos(angle) * r, y: scatterCenter.y + Math.sin(angle) * r },
           });
         }
       }
@@ -1154,7 +1160,7 @@ export function simulateAttack(
       for (const evt of due) {
         for (const [, def] of defenses) {
           if (!def.alive) continue;
-          if (euclidean(evt.position, def.position) <= DEATH_LIGHTNING_SPLASH) {
+          if (distanceToFootprint(evt.position, def.position, def.size) <= DEATH_LIGHTNING_SPLASH) {
             const actual = Math.min(troop.deathDamage, def.hp);
             def.hp -= actual;
             if (def.hp <= 0 && def.alive) { def.hp = 0; def.alive = false; def.destroyedAt = simTime; }
@@ -1162,7 +1168,7 @@ export function simulateAttack(
         }
         for (const [, bld] of buildings) {
           if (!bld.alive) continue;
-          if (euclidean(evt.position, bld.position) <= DEATH_LIGHTNING_SPLASH) {
+          if (distanceToFootprint(evt.position, bld.position, bld.size) <= DEATH_LIGHTNING_SPLASH) {
             const actual = Math.min(troop.deathDamage, bld.hp);
             bld.hp -= actual;
             if (bld.hp <= 0 && bld.alive) { bld.hp = 0; bld.alive = false; bld.destroyedAt = simTime; }
