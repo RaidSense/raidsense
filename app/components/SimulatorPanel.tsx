@@ -1290,8 +1290,22 @@ export default function SimulatorPanel() {
             wallLevel={wallLevel}
             placedWalls={placedWalls}
             onPlaceWall={(x, y) => {
-              const key = `${x},${y}`;
               if (placedWalls.some((w) => w.x === x && w.y === y)) return;
+              // Bloquer si case occupée par une défense
+              const onDefense = placed.some((d) => {
+                const sz = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
+                return x >= d.x && x < d.x + sz && y >= d.y && y < d.y + sz;
+              });
+              if (onDefense) return;
+              // Bloquer si case occupée par un bâtiment neutre
+              const onBuilding = placedBuildings.some((b) => {
+                const sz = NEUTRAL_BUILDINGS.find((nb) => nb.id === b.buildingId)?.size ?? 1;
+                return x >= b.x && x < b.x + sz && y >= b.y && y < b.y + sz;
+              });
+              if (onBuilding) return;
+              // Bloquer si case occupée par une troupe placée manuellement
+              if (placedTroops.some((t) => t.x === x && t.y === y)) return;
+              const key = `${x},${y}`;
               setPlacedWalls((prev) => [...prev, { instanceId: `w-${key}-${Date.now()}`, x, y, level: wallLevel }]);
               clearResult();
             }}
@@ -1598,6 +1612,7 @@ export default function SimulatorPanel() {
           meta={meta}
           placed={placed}
           placedBuildings={placedBuildings}
+          placedWalls={placedWalls}
           totalTroops={totalTroops}
           survivors={survivors}
         />
@@ -2280,6 +2295,28 @@ function BattleGrid({
             </g>
           );
         })}
+        {/* Wall HP bars (replay) */}
+        {replayResult && (placedWalls ?? []).map((w) => {
+          const maxHp = WALL_HP[w.level] ?? 100;
+          const wr    = replayResult.walls?.[w.instanceId];
+          if (!wr) return null;
+          if (wr.destroyedAt !== null && (replayTime ?? 0) >= wr.destroyedAt) return null;
+          const s   = Math.min(Math.floor(replayTime ?? 0), wr.hpPerSecond.length - 1);
+          const hp  = wr.hpPerSecond[s] ?? maxHp;
+          const pct = Math.max(0, Math.min(1, hp / maxHp));
+          if (hpOnDamageOnly && hp >= maxHp) return null;
+          const BAR_W    = cellPx - 4;
+          const BAR_H    = 2;
+          const barX     = w.x * cellPx + 2;
+          const barY     = (w.y + 1) * cellPx - BAR_H - 1;
+          const barColor = pct > 0.6 ? "#22c55e" : pct > 0.3 ? "#f59e0b" : "#ef4444";
+          return (
+            <g key={`hp-wall-${w.instanceId}`}>
+              <rect x={barX} y={barY} width={BAR_W} height={BAR_H} rx={1} fill="rgba(0,0,0,0.55)" />
+              <rect x={barX} y={barY} width={BAR_W * pct} height={BAR_H} rx={1} fill={barColor} />
+            </g>
+          );
+        })}
         {/* Inferno Tower beams */}
         {infernoBeams?.map((b, i) => {
           const sw    = b.stage === 2 ? 3 : b.stage === 1 ? 2 : 1;
@@ -2486,6 +2523,23 @@ function BattleGrid({
                 </>
               )}
             </g>
+          );
+        })}
+        {/* Debug: wall stats overlay */}
+        {debugMode && replayResult && (placedWalls ?? []).map((w) => {
+          const wr = replayResult.walls?.[w.instanceId];
+          if (!wr) return null;
+          const s    = Math.min(Math.floor(replayTime ?? 0), wr.hpPerSecond.length - 1);
+          const hp   = wr.hpPerSecond[s] ?? WALL_HP[w.level];
+          const dead = wr.destroyedAt !== null && (replayTime ?? 0) >= wr.destroyedAt;
+          return (
+            <text key={`dbg-w-${w.instanceId}`}
+              x={w.x * cellPx + cellPx / 2} y={w.y * cellPx + cellPx / 2 + 1}
+              textAnchor="middle" dominantBaseline="middle"
+              fontSize={3.5} fontFamily="monospace"
+              fill={dead ? "#ef4444" : "#fbbf24"} opacity={0.85}
+              style={{ userSelect: "none" }}
+            >{dead ? "✕" : hp}</text>
           );
         })}
         {/* Debug overlay — HP valeurs + distance cible */}
@@ -2897,12 +2951,13 @@ function TroopComposer({
 // ── ResultsSection ─────────────────────────────────────────────────────────
 
 function ResultsSection({
-  result, meta, placed, placedBuildings, totalTroops, survivors,
+  result, meta, placed, placedBuildings, placedWalls, totalTroops, survivors,
 }: {
   result: SimulationResult;
   meta: TroopMeta[];
   placed: PlacedDefense[];
   placedBuildings: PlacedBuilding[];
+  placedWalls: WallPlacement[];
   totalTroops: number;
   survivors: number;
 }) {
@@ -2976,6 +3031,49 @@ function ResultsSection({
           </div>
         </div>
       )}
+
+      {/* Wall results */}
+      {placedWalls.length > 0 && (() => {
+        const wallEntries = placedWalls.map((w) => {
+          const wr = result.walls?.[w.instanceId];
+          const destroyed = wr?.destroyedAt !== null && wr?.destroyedAt !== undefined;
+          const damageReceived = wr
+            ? (WALL_HP[w.level] ?? 100) - (wr.hpPerSecond[wr.hpPerSecond.length - 1] ?? 0)
+            : 0;
+          return { w, wr, destroyed, damageReceived };
+        });
+        const destroyedWalls = wallEntries.filter((e) => e.destroyed).sort((a, b) => (a.wr!.destroyedAt ?? 0) - (b.wr!.destroyedAt ?? 0));
+        const totalDmgWalls = wallEntries.reduce((s, e) => s + e.damageReceived, 0);
+        const firstDestroyed = destroyedWalls[0];
+        return (
+          <div className="space-y-2">
+            <p className="text-xs text-slate-500">
+              Murs &nbsp;·&nbsp;
+              <span className="text-white">{destroyedWalls.length}</span>/{placedWalls.length} détruits
+              {totalDmgWalls > 0 && <> &nbsp;·&nbsp; {Math.round(totalDmgWalls)} dégâts reçus</>}
+            </p>
+            {firstDestroyed && (
+              <p className="text-xs text-amber-400">
+                Premier mur détruit à t={firstDestroyed.wr!.destroyedAt!.toFixed(1)}s
+                &nbsp;({firstDestroyed.w.x},{firstDestroyed.w.y}) Lv{firstDestroyed.w.level}
+              </p>
+            )}
+            {destroyedWalls.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {destroyedWalls.slice(0, 12).map(({ w, wr }) => (
+                  <span key={w.instanceId}
+                    className="rounded bg-red-900/30 px-1.5 py-0.5 text-xs text-red-300 border border-red-800/40">
+                    ({w.x},{w.y}) t={wr!.destroyedAt!.toFixed(1)}s
+                  </span>
+                ))}
+                {destroyedWalls.length > 12 && (
+                  <span className="text-xs text-slate-500">+{destroyedWalls.length - 12} autres</span>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Eliminated troops */}
       {meta.some((m) => result.troops[m.instanceId]?.destroyedAt !== null) && (
