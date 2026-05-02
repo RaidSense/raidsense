@@ -3,6 +3,7 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { TROOPS } from "../../lib/data/troops";
 import { type WallPlacement, WALL_HP, MAX_WALL_LEVEL } from "../../lib/data/walls";
+import { BASE_PRESETS, type BasePreset } from "../../lib/data/base-presets";
 import { DEFENSES } from "../../lib/data/defenses";
 import { NEUTRAL_BUILDINGS } from "../../lib/data/neutral-buildings";
 import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
@@ -562,6 +563,14 @@ export default function SimulatorPanel() {
   const [wallLevel,    setWallLevel]    = useState<number>(1);
   const [wallMode,     setWallMode]     = useState<boolean>(false);
   const [wallDragging, setWallDragging] = useState<boolean>(false);
+  const [globalWallLevel, setGlobalWallLevel] = useState<number>(1);
+
+  // Selection
+  const [selectedId,   setSelectedId]   = useState<string | null>(null);
+  const [selectedType, setSelectedType] = useState<"defense" | "building" | null>(null);
+
+  // Drag ghost preview size (set when dragging from palette)
+  const [dragItemSize, setDragItemSize] = useState<number>(1);
 
   const [showRanges,      setShowRanges]      = useState<boolean>(false);
   const [showHeatmap,     setShowHeatmap]     = useState<boolean>(false);
@@ -974,6 +983,63 @@ export default function SimulatorPanel() {
     setShowReplay(false); setReplayPlaying(false); setReplayTime(0);
   }
 
+  function handleSelect(id: string | null, type: "defense" | "building" | null) {
+    setSelectedId(id);
+    setSelectedType(type);
+  }
+
+  function handleDeleteSelected() {
+    if (!selectedId) return;
+    if (selectedType === "defense") {
+      setPlaced((p) => p.filter((d) => d.instanceId !== selectedId));
+    } else if (selectedType === "building") {
+      setPlacedBuildings((p) => p.filter((b) => b.instanceId !== selectedId));
+    }
+    setSelectedId(null);
+    setSelectedType(null);
+    clearResult();
+  }
+
+  function handleSelectedLevelChange(newLevel: number) {
+    if (!selectedId) return;
+    if (selectedType === "defense") {
+      setPlaced((p) => p.map((d) => d.instanceId === selectedId ? { ...d, level: newLevel } : d));
+    } else if (selectedType === "building") {
+      setPlacedBuildings((p) => p.map((b) => b.instanceId === selectedId ? { ...b, level: newLevel } : b));
+    }
+    clearResult();
+  }
+
+  function handleApplyGlobalWallLevel() {
+    setPlacedWalls((prev) => prev.map((w) => ({ ...w, level: globalWallLevel })));
+    clearResult();
+  }
+
+  function handleLoadPreset(preset: BasePreset) {
+    if (placed.length > 0 || placedBuildings.length > 0 || placedWalls.length > 0) {
+      if (!window.confirm(`Charger "${preset.name}" ? La base actuelle sera effacée.`)) return;
+    }
+    setPlaced(preset.defenses.map((d) => ({
+      instanceId: d.instanceId,
+      defenseId:  d.defenseId,
+      level:      d.level,
+      x:          d.x,
+      y:          d.y,
+      ...(d.mode ? { mode: d.mode } : {}),
+    })));
+    setPlacedBuildings(preset.buildings.map((b) => ({
+      instanceId: b.instanceId,
+      buildingId: b.buildingId,
+      level:      b.level,
+      x:          b.x,
+      y:          b.y,
+    })));
+    setPlacedWalls(preset.walls);
+    setSelectedId(null);
+    setSelectedType(null);
+    clearResult();
+  }
+
   function loadScenario(s: TestScenario) {
     setTroopSlots(s.troopSlots);
     setPlaced(s.placed);
@@ -1286,6 +1352,11 @@ export default function SimulatorPanel() {
             showAllRanges={showRanges}
             heatmapData={heatmapData}
             debugMode={debugMode}
+            selectedId={selectedId}
+            onSelectElement={handleSelect}
+            onDeleteSelected={handleDeleteSelected}
+            dragGhostSize={dragItemSize}
+            onDragEnd={() => setDragItemSize(1)}
             wallMode={wallMode}
             wallLevel={wallLevel}
             placedWalls={placedWalls}
@@ -1312,6 +1383,39 @@ export default function SimulatorPanel() {
             onRemoveWall={(id) => { setPlacedWalls((prev) => prev.filter((w) => w.instanceId !== id)); clearResult(); }}
             onWallDragState={setWallDragging}
           />
+          {/* Selected element panel */}
+          {selectedId && (() => {
+            const def = placed.find((d) => d.instanceId === selectedId);
+            const bld = !def ? placedBuildings.find((b) => b.instanceId === selectedId) : null;
+            if (!def && !bld) return null;
+            const name    = def ? (DEFENSES.find((d) => d.id === def.defenseId)?.name ?? def.defenseId) : (NEUTRAL_BUILDINGS.find((nb) => nb.id === bld!.buildingId)?.name ?? bld!.buildingId);
+            const size    = def ? (DEFENSES.find((d) => d.id === def.defenseId)?.size ?? 1) : (NEUTRAL_BUILDINGS.find((nb) => nb.id === bld!.buildingId)?.size ?? 1);
+            const curLv   = def ? def.level : bld!.level;
+            const maxLv   = def ? (DEFENSES.find((d) => d.id === def.defenseId)?.levels.length ?? 1) : (NEUTRAL_BUILDINGS.find((nb) => nb.id === bld!.buildingId)?.levels.length ?? 1);
+            const pos     = def ? `(${def.x},${def.y})` : `(${bld!.x},${bld!.y})`;
+            return (
+              <div className="rounded-xl border border-purple-500/40 bg-purple-950/20 px-3 py-2 text-xs flex items-center gap-3 flex-wrap">
+                <span className="text-purple-300 font-semibold">✦ {name}</span>
+                <span className="text-slate-400">{pos} · {size}×{size}</span>
+                <span className="text-slate-500">Lv</span>
+                <select
+                  value={curLv}
+                  onChange={(e) => handleSelectedLevelChange(Number(e.target.value))}
+                  className="bg-[#0d0d1a] text-purple-200 border border-purple-700/50 rounded px-1.5 py-0.5"
+                >
+                  {Array.from({ length: maxLv }, (_, i) => i + 1).map((lv) => (
+                    <option key={lv} value={lv}>{lv}</option>
+                  ))}
+                </select>
+                <button onClick={handleDeleteSelected}
+                  className="ml-auto text-red-400 hover:text-red-300 px-2 py-0.5 rounded border border-red-800/40 hover:border-red-600/60">
+                  ✕ Supprimer
+                </button>
+                <button onClick={() => handleSelect(null, null)}
+                  className="text-slate-500 hover:text-slate-300">✕</button>
+              </div>
+            );
+          })()}
           <p className="text-xs text-slate-600">
             Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp;
             {placementMode
@@ -1333,6 +1437,7 @@ export default function SimulatorPanel() {
               palLevels={palLevels}
               onLevelChange={(id, lv) => setPalLevels((p) => ({ ...p, [id]: lv }))}
               cellSize={cellSize}
+              onDragItemStart={(sz) => setDragItemSize(sz)}
             />
           </section>
 
@@ -1346,6 +1451,7 @@ export default function SimulatorPanel() {
               palLevels={palBuildingLevels}
               onLevelChange={(id, lv) => setPalBuildingLevels((p) => ({ ...p, [id]: lv }))}
               cellSize={cellSize}
+              onDragItemStart={(sz) => setDragItemSize(sz)}
             />
           </section>
 
@@ -1382,11 +1488,26 @@ export default function SimulatorPanel() {
                 ))}
               </div>
             </div>
+            {/* Niveau global */}
             {placedWalls.length > 0 && (
-              <button onClick={() => { setPlacedWalls([]); clearResult(); }}
-                className="text-xs text-red-400 hover:text-red-300">
-                ✕ Tout effacer
-              </button>
+              <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
+                <span className="text-xs text-slate-500 flex-shrink-0">Appliquer Lv</span>
+                <select
+                  value={globalWallLevel}
+                  onChange={(e) => setGlobalWallLevel(Number(e.target.value))}
+                  className="text-xs bg-[#0d0d1a] text-amber-300 border border-slate-700 rounded px-1 py-0.5 flex-1"
+                >
+                  {Array.from({ length: MAX_WALL_LEVEL }, (_, i) => i + 1).map((lv) => (
+                    <option key={lv} value={lv}>{lv}</option>
+                  ))}
+                </select>
+                <button onClick={handleApplyGlobalWallLevel}
+                  className="text-xs px-2 py-1 rounded bg-amber-800/40 hover:bg-amber-700/50 text-amber-300 border border-amber-700/40">
+                  ↻ Tous
+                </button>
+                <button onClick={() => { setPlacedWalls([]); clearResult(); }}
+                  className="text-xs text-red-400 hover:text-red-300">✕</button>
+              </div>
             )}
           </section>
 
@@ -1495,6 +1616,22 @@ export default function SimulatorPanel() {
           )}
         </div>
       )}
+
+      {/* ── Modèles de bases ────────────────────────────────────────────── */}
+      <details className="rounded-xl border border-[#1e2a45] bg-[#06080f] px-3 py-2 text-xs">
+        <summary className="cursor-pointer font-semibold text-slate-300 select-none">
+          🏰 Modèles de bases ({BASE_PRESETS.length})
+        </summary>
+        <div className="mt-2 space-y-1">
+          {BASE_PRESETS.map((p) => (
+            <button key={p.id} onClick={() => handleLoadPreset(p)}
+              className="w-full text-left rounded-lg px-3 py-1.5 bg-slate-800/40 hover:bg-slate-700/50 border border-slate-700/50 transition-colors">
+              <span className="font-medium text-slate-200 text-xs">{p.name}</span>
+              <span className="block text-slate-500 text-xs mt-0.5">{p.description}</span>
+            </button>
+          ))}
+        </div>
+      </details>
 
       {/* ── Scénarios de test (temporaire) ──────────────────────────────── */}
       <details className="rounded-xl border border-dashed border-yellow-600/40 bg-yellow-900/10 px-3 py-2 text-xs">
@@ -1693,6 +1830,11 @@ function BattleGrid({
   showAllRanges,
   heatmapData,
   debugMode,
+  selectedId,
+  onSelectElement,
+  onDeleteSelected,
+  dragGhostSize = 1,
+  onDragEnd,
   wallMode,
   wallLevel,
   placedWalls,
@@ -1749,6 +1891,11 @@ function BattleGrid({
   showAllRanges?: boolean;
   heatmapData?: Float32Array | null;
   debugMode?: boolean;
+  selectedId?: string | null;
+  onSelectElement?: (id: string, type: "defense" | "building") => void;
+  onDeleteSelected?: () => void;
+  dragGhostSize?: number;
+  onDragEnd?: () => void;
   wallMode?: boolean;
   wallLevel?: number;
   placedWalls?: WallPlacement[];
@@ -1760,6 +1907,15 @@ function BattleGrid({
   const [dragCell,          setDragCell]          = useState<string | null>(null);
   const [hoveredDefenseId,  setHoveredDefenseId]  = useState<string | null>(null);
   const [cellPx, setCellPx] = useState<number>(CELL);
+
+  // Delete key removes selected element
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Delete" || e.key === "Backspace") onDeleteSelected?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onDeleteSelected]);
   // Wall drag axis lock
   const [wallDragOrigin, setWallDragOrigin] = useState<{ x: number; y: number } | null>(null);
   const [wallDragAxis,   setWallDragAxis]   = useState<"x" | "y" | null>(null);
@@ -1945,9 +2101,10 @@ function BattleGrid({
       <div
         key={d.instanceId}
         draggable
-        title={`${name} Lv${d.level} (${d.x},${d.y}) — glisser: déplacer · clic: supprimer`}
+        title={`${name} Lv${d.level} (${d.x},${d.y}) — clic: sélectionner · clic-droit: supprimer · glisser: déplacer`}
         onDragStart={(e) => defDragStart(e, d, size)}
-        onClick={(e) => { e.stopPropagation(); onRemove(d.instanceId); }}
+        onClick={(e) => { e.stopPropagation(); onSelectElement?.(d.instanceId, "defense"); }}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onRemove(d.instanceId); if (selectedId === d.instanceId) { onSelectElement?.(null as unknown as string, null as unknown as "defense"); } }}
         style={{
           position:        "absolute",
           left:            d.x * cellPx + 1,
@@ -2033,7 +2190,8 @@ function BattleGrid({
           e.dataTransfer.setDragImage(ghost, tilePx / 2, tilePx / 2);
           setTimeout(() => document.body.removeChild(ghost), 0);
         }}
-        onClick={(e) => { e.stopPropagation(); onRemoveBuilding?.(b.instanceId); }}
+        onClick={(e) => { e.stopPropagation(); onSelectElement?.(b.instanceId, "building"); }}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onRemoveBuilding?.(b.instanceId); }}
         style={{
           position:        "absolute",
           left:            b.x * cellPx + 1,
@@ -2077,7 +2235,8 @@ function BattleGrid({
       }}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
-      onDrop={onDrop}
+      onDrop={(e) => { onDrop(e); onDragEnd?.(); }}
+      onDragEnd={() => onDragEnd?.()}
       onClick={onClick}
       onMouseDown={onMouseDown}
       onMouseMove={(e) => { onMouseMove(e); onMouseMoveDrag(e); }}
@@ -2112,19 +2271,31 @@ function BattleGrid({
             />
           );
         })()}
-        {/* Drag-over cell highlight */}
-        {dragCell && (
-          <rect
-            x={parseInt(dragCell.split(",")[0]) * cellPx + 1}
-            y={parseInt(dragCell.split(",")[1]) * cellPx + 1}
-            width={cellPx - 2}
-            height={cellPx - 2}
-            fill="rgba(251,191,36,0.2)"
-            stroke="#f59e0b"
-            strokeWidth={1.5}
-            rx={2}
-          />
-        )}
+        {/* Drag-over ghost — footprint réel (dragGhostSize × dragGhostSize) */}
+        {dragCell && (() => {
+          const gx = parseInt(dragCell.split(",")[0]);
+          const gy = parseInt(dragCell.split(",")[1]);
+          const gs = Math.max(1, dragGhostSize);
+          // Simple collision check against placed defenses/buildings/walls
+          let valid = true;
+          for (const d of placed) {
+            const sz = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
+            if (gx < d.x + sz && gx + gs > d.x && gy < d.y + sz && gy + gs > d.y) { valid = false; break; }
+          }
+          if (valid) for (const b of (placedBuildings ?? [])) {
+            const sz = NEUTRAL_BUILDINGS.find((nb) => nb.id === b.buildingId)?.size ?? 1;
+            if (gx < b.x + sz && gx + gs > b.x && gy < b.y + sz && gy + gs > b.y) { valid = false; break; }
+          }
+          const fill   = valid ? "rgba(34,197,94,0.15)"  : "rgba(239,68,68,0.15)";
+          const stroke = valid ? "#22c55e"                : "#ef4444";
+          return (
+            <rect
+              x={gx * cellPx + 0.5} y={gy * cellPx + 0.5}
+              width={gs * cellPx - 1} height={gs * cellPx - 1}
+              fill={fill} stroke={stroke} strokeWidth={1.5} rx={2}
+            />
+          );
+        })()}
         {/* Range circle for hovered defense */}
         {(() => {
           if (!hoveredDefenseId) return null;
@@ -2187,6 +2358,28 @@ function BattleGrid({
             </g>
           );
         })}
+        {/* Selection ring */}
+        {selectedId && (() => {
+          const def = placed.find((d) => d.instanceId === selectedId);
+          if (def) {
+            const sz = DEFENSES.find((d) => d.id === def.defenseId)?.size ?? 1;
+            return (
+              <rect x={def.x * cellPx - 1} y={def.y * cellPx - 1}
+                width={sz * cellPx + 2} height={sz * cellPx + 2}
+                fill="none" stroke="#f0abfc" strokeWidth={1.5} strokeDasharray="4 2" rx={2} />
+            );
+          }
+          const bld = placedBuildings?.find((b) => b.instanceId === selectedId);
+          if (bld) {
+            const sz = NEUTRAL_BUILDINGS.find((nb) => nb.id === bld.buildingId)?.size ?? 1;
+            return (
+              <rect x={bld.x * cellPx - 1} y={bld.y * cellPx - 1}
+                width={sz * cellPx + 2} height={sz * cellPx + 2}
+                fill="none" stroke="#f0abfc" strokeWidth={1.5} strokeDasharray="4 2" rx={2} />
+            );
+          }
+          return null;
+        })()}
         {/* Portées de toutes les défenses (toggle) */}
         {showAllRanges && placed.map((d) => {
           const defData   = DEFENSES.find((def) => def.id === d.defenseId);
@@ -2761,10 +2954,12 @@ function DefensePalette({
   palLevels,
   onLevelChange,
   cellSize,
+  onDragItemStart,
 }: {
   palLevels: Record<string, number>;
   onLevelChange: (id: string, level: number) => void;
   cellSize: number;
+  onDragItemStart?: (size: number) => void;
 }) {
   return (
     <div className="space-y-1.5">
@@ -2782,6 +2977,7 @@ function DefensePalette({
                 JSON.stringify({ defenseId: def.id, level })
               );
               e.dataTransfer.effectAllowed = "copy";
+              onDragItemStart?.(def.size ?? 1);
 
               // Image de drag : carré coloré à la vraie taille du bâtiment
               const tilePx = Math.round(cellSize * (def.size ?? 1));
@@ -2845,10 +3041,12 @@ function BuildingPalette({
   palLevels,
   onLevelChange,
   cellSize,
+  onDragItemStart,
 }: {
   palLevels: Record<string, number>;
   onLevelChange: (id: string, level: number) => void;
   cellSize: number;
+  onDragItemStart?: (size: number) => void;
 }) {
   return (
     <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
