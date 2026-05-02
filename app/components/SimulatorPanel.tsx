@@ -1760,6 +1760,9 @@ function BattleGrid({
   const [dragCell,          setDragCell]          = useState<string | null>(null);
   const [hoveredDefenseId,  setHoveredDefenseId]  = useState<string | null>(null);
   const [cellPx, setCellPx] = useState<number>(CELL);
+  // Wall drag axis lock
+  const [wallDragOrigin, setWallDragOrigin] = useState<{ x: number; y: number } | null>(null);
+  const [wallDragAxis,   setWallDragAxis]   = useState<"x" | "y" | null>(null);
 
   // Heatmap: Float32Array → canvas → dataURL (single SVG <image> for perf)
   const heatmapSrc = useMemo((): string | null => {
@@ -1886,6 +1889,8 @@ function BattleGrid({
     const existing = placedWalls?.find((w) => w.x === c.x && w.y === c.y);
     if (existing) { onRemoveWall?.(existing.instanceId); return; }
     // Case vide → poser et démarrer le drag
+    setWallDragOrigin({ x: c.x, y: c.y });
+    setWallDragAxis(null);
     onWallDragState?.(true);
     onPlaceWall?.(c.x, c.y);
   }
@@ -1893,10 +1898,31 @@ function BattleGrid({
   function onMouseMoveDrag(e: React.MouseEvent) {
     if (!wallMode || e.buttons === 0) return;
     const c = cellAt(e);
-    if (c && !placedWalls?.find((w) => w.x === c.x && w.y === c.y)) onPlaceWall?.(c.x, c.y);
+    if (!c) return;
+
+    // Déterminer l'axe au premier mouvement significatif
+    let axis = wallDragAxis;
+    if (axis === null && wallDragOrigin) {
+      const dx = Math.abs(c.x - wallDragOrigin.x);
+      const dy = Math.abs(c.y - wallDragOrigin.y);
+      if (dx > 0 || dy > 0) {
+        axis = dx >= dy ? "x" : "y";
+        setWallDragAxis(axis);
+      }
+    }
+
+    // Contraindre à l'axe verrouillé
+    const tx = axis === "y" && wallDragOrigin ? wallDragOrigin.x : c.x;
+    const ty = axis === "x" && wallDragOrigin ? wallDragOrigin.y : c.y;
+
+    if (!placedWalls?.find((w) => w.x === tx && w.y === ty)) onPlaceWall?.(tx, ty);
   }
 
-  function onMouseUp() { onWallDragState?.(false); }
+  function onMouseUp() {
+    setWallDragOrigin(null);
+    setWallDragAxis(null);
+    onWallDragState?.(false);
+  }
 
   const isModeCapable = (defId: string) => defId === "x-bow" || defId === "inferno-tower";
   const modeLabel = (d: PlacedDefense) => {
