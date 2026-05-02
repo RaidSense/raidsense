@@ -1556,7 +1556,20 @@ function BattleGrid({
               </g>
             );
           }
-          // cannon, air-defense, and others — solid ball with white core
+          if (defenseId === "air-defense") {
+            // Blue rocket missile oriented along flight direction
+            return (
+              <g key={i} transform={`translate(${x},${y}) rotate(${angle})`}>
+                {/* engine glow trail */}
+                <ellipse rx={9} ry={2.5} cx={-4} fill={color} opacity={0.10} />
+                {/* body */}
+                <ellipse rx={6} ry={2} fill={color} opacity={0.92} />
+                {/* bright nose */}
+                <ellipse rx={2.5} ry={1} cx={4} fill="rgba(255,255,255,0.85)" />
+              </g>
+            );
+          }
+          // cannon and others — solid ball with white core
           return (
             <g key={i}>
               <circle cx={x} cy={y} r={2.5} fill={color} opacity={0.9} />
