@@ -262,7 +262,8 @@ export const TROOPS: Troop[] = [
     movementSpeed: 20,
     attackType: "Ground & Air",
     preferredTarget: "None",
-    attackSpeed: 1.5,
+    attackSpeed: 1.0,
+    splashRadius: 0.3,
     levels: [
       { level: 1,  hp: 1200, dps: 75,  townHallRequired: 9  },
       { level: 2,  hp: 1300, dps: 85,  townHallRequired: 9  },

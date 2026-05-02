@@ -15,6 +15,7 @@ import type {
   HealTickEvent,
   ChainEvent,
   DeathLightningEvent,
+  TroopFireEvent,
 } from "../../lib/engine/calculator";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -352,7 +353,8 @@ export default function SimulatorPanel() {
           trailCy = (trailStart.y + 0.5) * cellSize;
         }
       }
-      return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label, hpPct, isUnderground, trailCx, trailCy }];
+      const isEnraged = tr.enragedPerSecond?.[sIdx] ?? false;
+      return [{ id: m.instanceId, cx: (pos.x + 0.5) * cellSize, cy: (pos.y + 0.5) * cellSize, fill: m.colorHex, label: m.label, hpPct, isUnderground, trailCx, trailCy, isEnraged }];
     });
   }, [showReplay, result, meta, replayTime, cellSize]);
 
@@ -427,6 +429,28 @@ export default function SimulatorPanel() {
         topY: Math.max(0, (ev.position.y - 5) * cellSize), // bolt from 5 tiles above
         alpha,
         seed: ev.time * 200 + out.length * 17,
+      });
+    }
+    return out.length ? out : undefined;
+  }, [showReplay, result, replayTime, cellSize]);
+
+  // Baby Dragon fireballs in flight
+  const activeTroopFireballs = useMemo(() => {
+    if (!showReplay || !result?.troopFireEvents?.length) return undefined;
+    const out: { x: number; y: number }[] = [];
+    for (const ev of result.troopFireEvents) {
+      if (ev.time > replayTime) break;
+      const elapsed = replayTime - ev.time;
+      const dx = ev.to.x - ev.from.x;
+      const dy = ev.to.y - ev.from.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist === 0) continue;
+      const travelTime = dist / PROJECTILE_SPEED;
+      if (elapsed >= travelTime) continue;
+      const t = elapsed / travelTime;
+      out.push({
+        x: (ev.from.x + dx * t) * cellSize,
+        y: (ev.from.y + dy * t) * cellSize,
       });
     }
     return out.length ? out : undefined;
@@ -817,6 +841,7 @@ export default function SimulatorPanel() {
             healHalos={healHalos}
             activeChainLinks={activeChainLinks}
             activeDeathLightning={activeDeathLightning}
+            activeTroopFireballs={activeTroopFireballs}
             targetLines={targetLines}
             onCellSizeChange={setCellSize}
             result={result}
@@ -974,6 +999,7 @@ interface ReplayDot {
   isUnderground: boolean;
   trailCx?: number;    // trail start X in canvas coords (set when underground)
   trailCy?: number;
+  isEnraged: boolean;
 }
 
 /** Fast deterministic pseudo-random in [-1, 1] for lightning jitter. */
@@ -1023,6 +1049,7 @@ function BattleGrid({
   healHalos,
   activeChainLinks,
   activeDeathLightning,
+  activeTroopFireballs,
   targetLines,
   onMove,
   onModeToggle,
@@ -1052,7 +1079,8 @@ function BattleGrid({
   activeHealOrbs?:    { x: number; y: number }[];
   healHalos?:         { x: number; y: number; alpha: number }[];
   activeChainLinks?:    { x1: number; y1: number; x2: number; y2: number; alpha: number }[];
-  activeDeathLightning?: { x: number; y: number; topY: number; alpha: number; seed: number }[];
+  activeDeathLightning?:  { x: number; y: number; topY: number; alpha: number; seed: number }[];
+  activeTroopFireballs?:  { x: number; y: number }[];
   targetLines?:  { x1: number; y1: number; x2: number; y2: number; color: string }[];
   onMove?: (instanceId: string, toX: number, toY: number) => void;
   onModeToggle?: (instanceId: string) => void;
@@ -1535,6 +1563,14 @@ function BattleGrid({
             </g>
           );
         })}
+        {/* Baby Dragon fireballs */}
+        {activeTroopFireballs?.map((f, i) => (
+          <g key={`bd-fire-${i}`}>
+            <circle cx={f.x} cy={f.y} r={6}   fill="#f97316" opacity={0.15} />
+            <circle cx={f.x} cy={f.y} r={3.5}  fill="#ea580c" opacity={0.90} />
+            <circle cx={f.x} cy={f.y} r={1.5}  fill="#fef08a" opacity={0.85} />
+          </g>
+        ))}
         {/* Electro Dragon death lightning — bolts from sky */}
         {activeDeathLightning?.map((dl, i) => {
           const d = generateLightningPath(dl.x, dl.topY, dl.x, dl.y, dl.seed);
@@ -1663,6 +1699,11 @@ function BattleGrid({
           const hpColor = dot.hpPct > 0.6 ? "#22c55e" : dot.hpPct > 0.3 ? "#f59e0b" : "#ef4444";
           return (
             <g key={dot.id}>
+              {/* Baby Dragon enragé — halo orange pulsant */}
+              {dot.isEnraged && (
+                <circle cx={dot.cx} cy={dot.cy} r={9}
+                  fill="none" stroke="#f97316" strokeWidth={1.5} opacity={0.75} />
+              )}
               {/* Miner underground: sillon de forage + indicateur discret */}
               {dot.isUnderground && (
                 <>

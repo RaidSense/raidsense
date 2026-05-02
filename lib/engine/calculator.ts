@@ -25,6 +25,9 @@ export const PROJECTILE_SPEED = 25;
 // Healer: radius (tiles) around the heal target within which all allies are healed.
 const HEALER_SPLASH_RADIUS = 1.5;
 
+// Baby Dragon enrage
+const ENRAGE_RADIUS = 4.5;   // tiles — no allied air unit closer than this → enraged
+
 // Electro Dragon death lightning
 const DEATH_LIGHTNING_COUNT    = 6;
 const DEATH_LIGHTNING_DELAY    = 0.8;   // s after death before first bolt
@@ -64,7 +67,7 @@ const TROOP_ATTACK_RANGE: Record<string, number> = {
   "healer":         5.0,
   "dragon":         3,
   "pekka":          0.8,
-  "baby-dragon":    2.0,
+  "baby-dragon":    2.75,
   "miner":          0.5,
   "electro-dragon": 3,
 };
@@ -130,6 +133,8 @@ export interface TroopResult {
   destroyedAt: number | null;
   /** Underground state snapshot at t = 0, 1, 2, … seconds (Miner only; always false otherwise). */
   undergroundPerSecond: boolean[];
+  /** Enraged state snapshot at t = 0, 1, 2, … seconds (Baby Dragon only; always false otherwise). */
+  enragedPerSecond: boolean[];
 }
 
 /** Per-defense simulation output. */
@@ -148,6 +153,16 @@ export interface BuildingResult {
   instanceId: string;
   hpPerSecond: number[];
   destroyedAt: number | null;
+}
+
+/** Fireball or attack projectile fired by a troop (Baby Dragon, …). */
+export interface TroopFireEvent {
+  time:           number;
+  troopId:        string;
+  attackerInstId: string;
+  from:           Vec2;   // attacker centre (tile + 0.5)
+  to:             Vec2;   // target centre (tile + 0.5)
+  targetInstId:   string;
 }
 
 /** One death-lightning bolt impact from a dying Electro Dragon. */
@@ -248,6 +263,7 @@ export interface SimulationResult {
   healEvents: HealTickEvent[];
   chainEvents: ChainEvent[];
   deathLightningEvents: DeathLightningEvent[];
+  troopFireEvents: TroopFireEvent[];
   targetChanges: TargetChangeEvent[];
 }
 
@@ -270,6 +286,8 @@ interface TroopState {
   healVisualCooldown:  number;   // counts down; emits HealEvent when ≤ 0
   isUnderground:       boolean;  // true while Miner is burrowing toward target
   undergroundHistory:  boolean[];
+  isEnraged:           boolean;  // true when Baby Dragon is alone (no allied air unit nearby)
+  enragedHistory:      boolean[];
   deathDamage:             number;   // damage per death-lightning bolt (Electro Dragon)
   deathLightningPending:   { fireAt: number; position: Vec2 }[];
   deathLightningTriggered: boolean;
@@ -445,6 +463,8 @@ export function simulateAttack(
       healVisualCooldown: 0,
       isUnderground:      dep.troopId === "miner",
       undergroundHistory: [],
+      isEnraged:          false,
+      enragedHistory:     [],
       chainMaxTargets:    troopData.chainMaxTargets ?? 0,
       chainFalloff:       troopData.chainFalloff    ?? 1,
       chainRange:         troopData.chainRange      ?? 0,
@@ -635,6 +655,7 @@ export function simulateAttack(
     troop.targetHistory.push(troop.targetId);
     troop.positionHistory.push({ ...troop.position });
     troop.undergroundHistory.push(troop.isUnderground);
+    troop.enragedHistory.push(troop.isEnraged);
   }
   for (const def of defenses.values()) {
     def.hpHistory.push(Math.ceil(def.hp));
@@ -652,7 +673,8 @@ export function simulateAttack(
   const healEvents:    HealTickEvent[]     = [];
   const chainEvents:        ChainEvent[]          = [];
   const deathLightningEvents: DeathLightningEvent[] = [];
-  const targetChanges:      TargetChangeEvent[]   = [];
+  const troopFireEvents:      TroopFireEvent[]      = [];
+  const targetChanges:        TargetChangeEvent[]   = [];
 
   function fireShot(
     def:       DefenseState,
@@ -1080,10 +1102,26 @@ export function simulateAttack(
         troop.isUnderground = distToFootprint > troop.attackRange;
       }
 
+      // Baby Dragon: enragé si aucune unité aérienne alliée dans le rayon 4.5 tiles
+      if (troop.troopId === "baby-dragon") {
+        troop.isEnraged = true;
+        for (const [id, t] of troops) {
+          if (id === troop.instanceId || !t.alive || !t.isActive || !t.isAirUnit) continue;
+          if (euclidean(troop.position, t.position) < ENRAGE_RADIUS) {
+            troop.isEnraged = false;
+            break;
+          }
+        }
+      }
+
       if (distToFootprint <= troop.attackRange) {
         troop.attackCooldown -= TICK;
         if (troop.attackCooldown <= 0) {
-          const damage = troop.dps * troop.attackSpeed;
+          // Baby Dragon rage: dégâts ×2, vitesse d'attaque ×1.5
+          const isEnragedBD          = troop.troopId === "baby-dragon" && troop.isEnraged;
+          const effectiveAttackSpeed = isEnragedBD ? troop.attackSpeed / 1.5 : troop.attackSpeed;
+          const effectiveDps         = isEnragedBD ? troop.dps * 2 : troop.dps;
+          const damage               = effectiveDps * effectiveAttackSpeed;
 
           if (troop.chainMaxTargets > 0) {
             // ── Electro Dragon : chaîne d'éclairs ────────────────────────────
@@ -1161,8 +1199,19 @@ export function simulateAttack(
                 }
               }
             }
+            // Baby Dragon fireball event (visuel replay)
+            if (troop.troopId === "baby-dragon") {
+              troopFireEvents.push({
+                time:           simTime,
+                troopId:        troop.troopId,
+                attackerInstId: troop.instanceId,
+                from:           { x: troop.position.x + 0.5, y: troop.position.y + 0.5 },
+                to:             { x: targetEntity.position.x + 0.5, y: targetEntity.position.y + 0.5 },
+                targetInstId:   troop.targetId!,
+              });
+            }
           }
-          troop.attackCooldown = troop.attackSpeed;
+          troop.attackCooldown = effectiveAttackSpeed;
         }
       } else {
         // Move toward the building centre until the footprint is in range.
@@ -1234,6 +1283,7 @@ export function simulateAttack(
         troop.targetHistory.push(troop.alive ? troop.targetId : null);
         troop.positionHistory.push({ ...troop.position });
         troop.undergroundHistory.push(troop.isUnderground);
+        troop.enragedHistory.push(troop.isEnraged);
       }
       for (const def of defenses.values()) {
         def.hpHistory.push(def.alive ? Math.ceil(def.hp) : 0);
@@ -1267,6 +1317,7 @@ export function simulateAttack(
       positionPerSecond:    troop.positionHistory,
       destroyedAt:          troop.destroyedAt,
       undergroundPerSecond: troop.undergroundHistory,
+      enragedPerSecond:     troop.enragedHistory,
     };
   }
 
@@ -1299,6 +1350,7 @@ export function simulateAttack(
     healEvents,
     chainEvents,
     deathLightningEvents,
+    troopFireEvents,
     targetChanges,
   };
 }
