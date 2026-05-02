@@ -14,6 +14,7 @@ import type {
   HealEvent,
   HealTickEvent,
   ChainEvent,
+  DeathLightningEvent,
 } from "../../lib/engine/calculator";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -410,6 +411,27 @@ export default function SimulatorPanel() {
     return out.length ? out : undefined;
   }, [showReplay, result, replayTime, cellSize]);
 
+  // Electro Dragon death lightning bolts
+  const DEATH_BOLT_DURATION = 0.28;
+  const activeDeathLightning = useMemo(() => {
+    if (!showReplay || !result?.deathLightningEvents?.length) return undefined;
+    const out: { x: number; y: number; topY: number; alpha: number; seed: number }[] = [];
+    for (const ev of result.deathLightningEvents) {
+      if (ev.time > replayTime) break;
+      const age = replayTime - ev.time;
+      if (age > DEATH_BOLT_DURATION) continue;
+      const alpha = 1 - age / DEATH_BOLT_DURATION;
+      out.push({
+        x:    ev.position.x * cellSize,
+        y:    ev.position.y * cellSize,
+        topY: Math.max(0, (ev.position.y - 5) * cellSize), // bolt from 5 tiles above
+        alpha,
+        seed: ev.time * 200 + out.length * 17,
+      });
+    }
+    return out.length ? out : undefined;
+  }, [showReplay, result, replayTime, cellSize]);
+
   // Electro Dragon chain links visible for ~0.35 s after firing
   const CHAIN_DURATION = 0.35;
   const activeChainLinks = useMemo(() => {
@@ -790,6 +812,7 @@ export default function SimulatorPanel() {
             activeHealOrbs={activeHealOrbs}
             healHalos={healHalos}
             activeChainLinks={activeChainLinks}
+            activeDeathLightning={activeDeathLightning}
             targetLines={targetLines}
             onCellSizeChange={setCellSize}
             result={result}
@@ -995,6 +1018,7 @@ function BattleGrid({
   activeHealOrbs,
   healHalos,
   activeChainLinks,
+  activeDeathLightning,
   targetLines,
   onMove,
   onModeToggle,
@@ -1023,7 +1047,8 @@ function BattleGrid({
   infernoBeams?:      { x1: number; y1: number; x2: number; y2: number; stage: 0|1|2 }[];
   activeHealOrbs?:    { x: number; y: number }[];
   healHalos?:         { x: number; y: number; alpha: number }[];
-  activeChainLinks?:  { x1: number; y1: number; x2: number; y2: number; alpha: number }[];
+  activeChainLinks?:    { x1: number; y1: number; x2: number; y2: number; alpha: number }[];
+  activeDeathLightning?: { x: number; y: number; topY: number; alpha: number; seed: number }[];
   targetLines?:  { x1: number; y1: number; x2: number; y2: number; color: string }[];
   onMove?: (instanceId: string, toX: number, toY: number) => void;
   onModeToggle?: (instanceId: string) => void;
@@ -1503,6 +1528,30 @@ function BattleGrid({
               {/* core */}
               <path d={d} fill="none" stroke="#e0f7ff" strokeWidth={1.5}
                 opacity={link.alpha * 0.95} strokeLinecap="round" strokeLinejoin="round" />
+            </g>
+          );
+        })}
+        {/* Electro Dragon death lightning — bolts from sky */}
+        {activeDeathLightning?.map((dl, i) => {
+          const d = generateLightningPath(dl.x, dl.topY, dl.x, dl.y, dl.seed);
+          const splashR = (1 - dl.alpha) * 18 + 2;
+          return (
+            <g key={`dl-${i}`}>
+              {/* outer glow */}
+              <path d={d} fill="none" stroke="#60a5fa" strokeWidth={10}
+                opacity={dl.alpha * 0.08} strokeLinecap="round" strokeLinejoin="round" />
+              {/* mid glow */}
+              <path d={d} fill="none" stroke="#93c5fd" strokeWidth={5}
+                opacity={dl.alpha * 0.22} strokeLinecap="round" strokeLinejoin="round" />
+              {/* core */}
+              <path d={d} fill="none" stroke="#ffffff" strokeWidth={1.5}
+                opacity={dl.alpha * 0.95} strokeLinecap="round" strokeLinejoin="round" />
+              {/* ground impact ring */}
+              <circle cx={dl.x} cy={dl.y} r={splashR}
+                fill="none" stroke="#93c5fd" strokeWidth={1.5} opacity={dl.alpha * 0.65} />
+              {/* impact flash */}
+              <circle cx={dl.x} cy={dl.y} r={4}
+                fill="#bfdbfe" opacity={dl.alpha * 0.45} />
             </g>
           );
         })}

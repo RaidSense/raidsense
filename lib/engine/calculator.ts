@@ -25,6 +25,13 @@ export const PROJECTILE_SPEED = 25;
 // Healer: radius (tiles) around the heal target within which all allies are healed.
 const HEALER_SPLASH_RADIUS = 1.5;
 
+// Electro Dragon death lightning
+const DEATH_LIGHTNING_COUNT    = 6;
+const DEATH_LIGHTNING_DELAY    = 0.8;   // s after death before first bolt
+const DEATH_LIGHTNING_INTERVAL = 0.3;   // s between consecutive bolts
+const DEATH_LIGHTNING_SPREAD   = 3;     // tile radius of random scatter
+const DEATH_LIGHTNING_SPLASH   = 1.5;   // splash radius per bolt (tiles)
+
 // Set to true to print target-acquisition, cooldown, and shot events to the console.
 const DEBUG = true;
 
@@ -143,6 +150,16 @@ export interface BuildingResult {
   destroyedAt: number | null;
 }
 
+/** One death-lightning bolt impact from a dying Electro Dragon. */
+export interface DeathLightningEvent {
+  time:         number;
+  sourceInstId: string;
+  /** Impact centre in tile coords (fractional). */
+  position:     Vec2;
+  damage:       number;
+  splashRadius: number;
+}
+
 /** One link in an Electro Dragon chain. */
 export interface ChainLink {
   from:         Vec2;
@@ -230,6 +247,7 @@ export interface SimulationResult {
   heals: HealEvent[];
   healEvents: HealTickEvent[];
   chainEvents: ChainEvent[];
+  deathLightningEvents: DeathLightningEvent[];
   targetChanges: TargetChangeEvent[];
 }
 
@@ -252,6 +270,9 @@ interface TroopState {
   healVisualCooldown:  number;   // counts down; emits HealEvent when ≤ 0
   isUnderground:       boolean;  // true while Miner is burrowing toward target
   undergroundHistory:  boolean[];
+  deathDamage:             number;   // damage per death-lightning bolt (Electro Dragon)
+  deathLightningPending:   { fireAt: number; position: Vec2 }[];
+  deathLightningTriggered: boolean;
   chainMaxTargets:     number;   // Electro Dragon chain (0 = no chain)
   chainFalloff:        number;   // damage multiplier per bounce
   chainRange:          number;   // max centre-to-centre distance per bounce (tiles)
@@ -425,6 +446,9 @@ export function simulateAttack(
       chainMaxTargets:    troopData.chainMaxTargets ?? 0,
       chainFalloff:       troopData.chainFalloff    ?? 1,
       chainRange:         troopData.chainRange      ?? 0,
+      deathDamage:             levelData.deathDamage ?? 0,
+      deathLightningPending:   [],
+      deathLightningTriggered: false,
       position: { ...dep.dropPosition },
       isAirUnit,
       preferredTarget: troopData.preferredTarget,
@@ -622,8 +646,9 @@ export function simulateAttack(
   const shots:         ShotEvent[]         = [];
   const heals:         HealEvent[]         = [];
   const healEvents:    HealTickEvent[]     = [];
-  const chainEvents:   ChainEvent[]        = [];
-  const targetChanges: TargetChangeEvent[] = [];
+  const chainEvents:        ChainEvent[]          = [];
+  const deathLightningEvents: DeathLightningEvent[] = [];
+  const targetChanges:      TargetChangeEvent[]   = [];
 
   function fireShot(
     def:       DefenseState,
@@ -1103,6 +1128,56 @@ export function simulateAttack(
       }
     }
 
+    // --- Electro Dragon death lightning: schedule + process ------------------
+
+    for (const troop of troops.values()) {
+      // Schedule 6 bolts the first tick after death
+      if (troop.troopId === "electro-dragon" && !troop.alive && !troop.deathLightningTriggered && troop.deathDamage > 0) {
+        troop.deathLightningTriggered = true;
+        const baseTime = troop.destroyedAt ?? simTime;
+        for (let i = 0; i < DEATH_LIGHTNING_COUNT; i++) {
+          const angle = Math.random() * 2 * Math.PI;
+          const r     = Math.random() * DEATH_LIGHTNING_SPREAD;
+          troop.deathLightningPending.push({
+            fireAt:   baseTime + DEATH_LIGHTNING_DELAY + i * DEATH_LIGHTNING_INTERVAL,
+            position: { x: troop.position.x + Math.cos(angle) * r, y: troop.position.y + Math.sin(angle) * r },
+          });
+        }
+      }
+      // Fire pending bolts whose time has come
+      if (!troop.deathLightningPending.length) continue;
+      const due: { fireAt: number; position: Vec2 }[] = [];
+      troop.deathLightningPending = troop.deathLightningPending.filter(e => {
+        if (e.fireAt <= simTime) { due.push(e); return false; }
+        return true;
+      });
+      for (const evt of due) {
+        for (const [, def] of defenses) {
+          if (!def.alive) continue;
+          if (euclidean(evt.position, def.position) <= DEATH_LIGHTNING_SPLASH) {
+            const actual = Math.min(troop.deathDamage, def.hp);
+            def.hp -= actual;
+            if (def.hp <= 0 && def.alive) { def.hp = 0; def.alive = false; def.destroyedAt = simTime; }
+          }
+        }
+        for (const [, bld] of buildings) {
+          if (!bld.alive) continue;
+          if (euclidean(evt.position, bld.position) <= DEATH_LIGHTNING_SPLASH) {
+            const actual = Math.min(troop.deathDamage, bld.hp);
+            bld.hp -= actual;
+            if (bld.hp <= 0 && bld.alive) { bld.hp = 0; bld.alive = false; bld.destroyedAt = simTime; }
+          }
+        }
+        deathLightningEvents.push({
+          time:         simTime,
+          sourceInstId: troop.instanceId,
+          position:     { ...evt.position },
+          damage:       troop.deathDamage,
+          splashRadius: DEATH_LIGHTNING_SPLASH,
+        });
+      }
+    }
+
     // --- Whole-second snapshot -----------------------------------------------
 
     if (tick % TICKS_PER_SECOND === 0) {
@@ -1124,10 +1199,11 @@ export function simulateAttack(
 
     lastSimTime = simTime;
 
-    const allTroopsDead    = [...troops.values()].every((t) => !t.alive);
-    const allTargetsDown   = [...defenses.values()].every((d) => !d.alive)
-                          && [...buildings.values()].every((b) => !b.alive);
-    if (allTroopsDead || allTargetsDown) break;
+    const hasPendingLightning = [...troops.values()].some(t => t.deathLightningPending.length > 0);
+    const allTroopsDead       = [...troops.values()].every((t) => !t.alive);
+    const allTargetsDown      = [...defenses.values()].every((d) => !d.alive)
+                             && [...buildings.values()].every((b) => !b.alive);
+    if ((allTroopsDead && !hasPendingLightning) || allTargetsDown) break;
   }
 
   // -------------------------------------------------------------------------
@@ -1174,6 +1250,7 @@ export function simulateAttack(
     heals,
     healEvents,
     chainEvents,
+    deathLightningEvents,
     targetChanges,
   };
 }

@@ -7,6 +7,8 @@ export interface TroopLevel {
   dps: number;
   /** Heal per second (Healer only). */
   hps?: number;
+  /** Damage per death-lightning bolt (Electro Dragon only). */
+  deathDamage?: number;
   townHallRequired: number;
 }
 
@@ -309,15 +311,15 @@ export const TROOPS: Troop[] = [
     chainFalloff:    0.8,
     chainRange:      1,
     levels: [
-      { level: 1, hp: 3400, dps: 260, townHallRequired: 11 },
-      { level: 2, hp: 3900, dps: 290, townHallRequired: 11 },
-      { level: 3, hp: 4400, dps: 320, townHallRequired: 12 },
-      { level: 4, hp: 4700, dps: 350, townHallRequired: 13 },
-      { level: 5, hp: 5000, dps: 380, townHallRequired: 13 },
-      { level: 6, hp: 5400, dps: 410, townHallRequired: 14 },
-      { level: 7, hp: 5700, dps: 440, townHallRequired: 14 },
-      { level: 8, hp: 6200, dps: 460, townHallRequired: 15 },
-      { level: 9, hp: 6700, dps: 500, townHallRequired: 16 },
+      { level: 1, hp: 3400, dps: 260, deathDamage: 200, townHallRequired: 11 },
+      { level: 2, hp: 3900, dps: 290, deathDamage: 230, townHallRequired: 11 },
+      { level: 3, hp: 4400, dps: 320, deathDamage: 260, townHallRequired: 12 },
+      { level: 4, hp: 4700, dps: 350, deathDamage: 290, townHallRequired: 13 },
+      { level: 5, hp: 5000, dps: 380, deathDamage: 320, townHallRequired: 13 },
+      { level: 6, hp: 5400, dps: 410, deathDamage: 360, townHallRequired: 14 },
+      { level: 7, hp: 5700, dps: 440, deathDamage: 400, townHallRequired: 14 },
+      { level: 8, hp: 6200, dps: 460, deathDamage: 440, townHallRequired: 15 },
+      { level: 9, hp: 6700, dps: 500, deathDamage: 480, townHallRequired: 16 },
     ],
   },
 ];
