@@ -1378,24 +1378,67 @@ function BattleGrid({
             strokeDasharray="3 2"
           />
         ))}
-        {/* Defense HP bars (replay only, step at second boundaries) */}
+        {/* Defense HP bars (replay) — per-second base + chain sub-second precision */}
         {replayResult && placed.map((d) => {
-          const defData  = DEFENSES.find((def) => def.id === d.defenseId);
+          const defData = DEFENSES.find((def) => def.id === d.defenseId);
           if (!defData) return null;
-          const size     = defData.size ?? 1;
-          const maxHp    = defData.levels.find((l) => l.level === d.level)?.hp ?? 1;
-          const dr       = replayResult.defenses[d.instanceId];
+          const size  = defData.size ?? 1;
+          const maxHp = defData.levels.find((l) => l.level === d.level)?.hp ?? 1;
+          const dr    = replayResult.defenses[d.instanceId];
           if (!dr) return null;
-          const s        = Math.min(Math.floor(replayTime ?? 0), dr.hpPerSecond.length - 1);
-          const hp       = dr.hpPerSecond[s] ?? maxHp;
-          const pct      = Math.max(0, Math.min(1, hp / maxHp));
+          const rt = replayTime ?? 0;
+          const s  = Math.min(Math.floor(rt), dr.hpPerSecond.length - 1);
+          let hp   = dr.hpPerSecond[s] ?? maxHp;
+          for (const ev of replayResult.chainEvents ?? []) {
+            if (ev.time > rt) break;
+            if (ev.time <= s) continue;
+            for (const link of ev.links) {
+              if (link.targetInstId === d.instanceId) hp -= link.damage;
+            }
+          }
+          hp = Math.max(0, hp);
+          const pct = Math.max(0, Math.min(1, hp / maxHp));
+          if (hpOnDamageOnly && hp >= maxHp) return null;
           const BAR_W    = size * cellPx - 4;
           const BAR_H    = 2;
           const barX     = d.x * cellPx + 2;
           const barY     = (d.y + size) * cellPx - BAR_H - 1;
           const barColor = pct > 0.6 ? "#22c55e" : pct > 0.3 ? "#f59e0b" : "#ef4444";
           return (
-            <g key={`hp-${d.instanceId}`}>
+            <g key={`hp-def-${d.instanceId}`}>
+              <rect x={barX} y={barY} width={BAR_W} height={BAR_H} rx={1} fill="rgba(0,0,0,0.45)" />
+              <rect x={barX} y={barY} width={BAR_W * pct} height={BAR_H} rx={1} fill={barColor} />
+            </g>
+          );
+        })}
+        {/* Building HP bars (replay) */}
+        {replayResult && (placedBuildings ?? []).map((b) => {
+          const bldData = NEUTRAL_BUILDINGS.find((nb) => nb.id === b.buildingId);
+          if (!bldData) return null;
+          const size  = bldData.size ?? 1;
+          const maxHp = bldData.levels.find((l) => l.level === b.level)?.hp ?? 1;
+          const br    = replayResult.buildings[b.instanceId];
+          if (!br) return null;
+          const rt = replayTime ?? 0;
+          const s  = Math.min(Math.floor(rt), br.hpPerSecond.length - 1);
+          let hp   = br.hpPerSecond[s] ?? maxHp;
+          for (const ev of replayResult.chainEvents ?? []) {
+            if (ev.time > rt) break;
+            if (ev.time <= s) continue;
+            for (const link of ev.links) {
+              if (link.targetInstId === b.instanceId) hp -= link.damage;
+            }
+          }
+          hp = Math.max(0, hp);
+          const pct = Math.max(0, Math.min(1, hp / maxHp));
+          if (hpOnDamageOnly && hp >= maxHp) return null;
+          const BAR_W    = size * cellPx - 4;
+          const BAR_H    = 2;
+          const barX     = b.x * cellPx + 2;
+          const barY     = (b.y + size) * cellPx - BAR_H - 1;
+          const barColor = pct > 0.6 ? "#22c55e" : pct > 0.3 ? "#f59e0b" : "#ef4444";
+          return (
+            <g key={`hp-bld-${b.instanceId}`}>
               <rect x={barX} y={barY} width={BAR_W} height={BAR_H} rx={1} fill="rgba(0,0,0,0.45)" />
               <rect x={barX} y={barY} width={BAR_W * pct} height={BAR_H} rx={1} fill={barColor} />
             </g>
