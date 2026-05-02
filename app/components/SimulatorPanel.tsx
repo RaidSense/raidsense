@@ -1865,12 +1865,7 @@ function BattleGrid({
   function onClick(e: React.MouseEvent) {
     const c = cellAt(e);
     if (!c) return;
-    if (wallMode) {
-      const existingWall = placedWalls?.find((w) => w.x === c.x && w.y === c.y);
-      if (existingWall) { onRemoveWall?.(existingWall.instanceId); return; }
-      onPlaceWall?.(c.x, c.y);
-      return;
-    }
+    if (wallMode) return; // géré entièrement par onMouseDown
     if (placementMode) {
       const existingTroop = placedTroops?.find((t) => t.x === c.x && t.y === c.y);
       if (existingTroop) { onRemovePlacedTroop?.(existingTroop.instanceId); return; }
@@ -1885,9 +1880,14 @@ function BattleGrid({
 
   function onMouseDown(e: React.MouseEvent) {
     if (!wallMode) return;
-    onWallDragState?.(true);
     const c = cellAt(e);
-    if (c && !placedWalls?.find((w) => w.x === c.x && w.y === c.y)) onPlaceWall?.(c.x, c.y);
+    if (!c) return;
+    // Clic sur mur existant → supprimer (pas de drag)
+    const existing = placedWalls?.find((w) => w.x === c.x && w.y === c.y);
+    if (existing) { onRemoveWall?.(existing.instanceId); return; }
+    // Case vide → poser et démarrer le drag
+    onWallDragState?.(true);
+    onPlaceWall?.(c.x, c.y);
   }
 
   function onMouseMoveDrag(e: React.MouseEvent) {
