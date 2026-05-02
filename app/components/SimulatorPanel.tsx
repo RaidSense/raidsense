@@ -949,6 +949,40 @@ interface ReplayDot {
   trailCy?: number;
 }
 
+/** Fast deterministic pseudo-random in [-1, 1] for lightning jitter. */
+function lightningRand(seed: number): number {
+  return Math.sin(seed * 127.1 + 311.7) * 2 - 1;
+}
+
+/**
+ * Generates a jagged SVG path between two points that looks like a lightning bolt.
+ * `seed` should change each animation frame for a flickering effect.
+ */
+function generateLightningPath(
+  x1: number, y1: number, x2: number, y2: number,
+  seed: number,
+): string {
+  const dx   = x2 - x1;
+  const dy   = y2 - y1;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 1) return `M ${x1} ${y1} L ${x2} ${y2}`;
+  const invDist = 1 / dist;
+  const perpX   = -dy * invDist;
+  const perpY   =  dx * invDist;
+  const segs    = Math.max(3, Math.ceil(dist / 22));
+  const spread  = Math.min(14, dist * 0.15);
+  const pts: string[] = [`${x1.toFixed(1)},${y1.toFixed(1)}`];
+  for (let i = 1; i < segs; i++) {
+    const t   = i / segs;
+    const bx  = x1 + dx * t;
+    const by  = y1 + dy * t;
+    const off = lightningRand(seed + i * 7.3 + t * 53.1) * spread;
+    pts.push(`${(bx + perpX * off).toFixed(1)},${(by + perpY * off).toFixed(1)}`);
+  }
+  pts.push(`${x2.toFixed(1)},${y2.toFixed(1)}`);
+  return "M " + pts.join(" L ");
+}
+
 function BattleGrid({
   placed,
   onPlace,
@@ -1268,7 +1302,7 @@ function BattleGrid({
       {defenseSquares}
 
       {/* SVG: drop ring + drag highlight */}
-      <svg className="absolute inset-0 pointer-events-none" width="100%" height="100%">
+      <svg className="absolute inset-0 pointer-events-none" style={{ zIndex: 2 }} width="100%" height="100%">
         {/* Deployment zone — full perimeter ring (evenodd donut) */}
         {(() => {
           const M = DEPLOY_MARGIN * cellPx;
@@ -1453,14 +1487,25 @@ function BattleGrid({
               stroke={color} strokeWidth={sw} strokeOpacity={0.85} strokeLinecap="round" />
           );
         })}
-        {/* Electro Dragon chain lightning */}
-        {activeChainLinks?.map((link, i) => (
-          <line key={`chain-${i}`}
-            x1={link.x1} y1={link.y1} x2={link.x2} y2={link.y2}
-            stroke="#67e8f9" strokeWidth={2.5} strokeLinecap="round"
-            opacity={link.alpha * 0.9}
-          />
-        ))}
+        {/* Electro Dragon chain lightning — zigzag path with glow */}
+        {activeChainLinks?.map((link, i) => {
+          // seed changes with replayTime → flicker effect each frame
+          const seed = i * 137.5 + (replayTime ?? 0) * 40;
+          const d    = generateLightningPath(link.x1, link.y1, link.x2, link.y2, seed);
+          return (
+            <g key={`chain-${i}`}>
+              {/* outer glow */}
+              <path d={d} fill="none" stroke="#80dfff" strokeWidth={9}
+                opacity={link.alpha * 0.10} strokeLinecap="round" strokeLinejoin="round" />
+              {/* mid glow */}
+              <path d={d} fill="none" stroke="#a5f3fc" strokeWidth={4.5}
+                opacity={link.alpha * 0.25} strokeLinecap="round" strokeLinejoin="round" />
+              {/* core */}
+              <path d={d} fill="none" stroke="#e0f7ff" strokeWidth={1.5}
+                opacity={link.alpha * 0.95} strokeLinecap="round" strokeLinejoin="round" />
+            </g>
+          );
+        })}
         {/* Heal orbs in flight — glowing lime sphere */}
         {activeHealOrbs?.map((h, i) => (
           <g key={`heal-orb-${i}`}>
