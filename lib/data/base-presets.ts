@@ -929,14 +929,29 @@ const pF: BasePreset = (() => {
   };
 })();
 
-export const BASE_PRESETS: BasePreset[] = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, pA, pB, pC, pD, pE, pF];
+// Presets retirés — échouent validatePresetStrict (overlaps mur/bâtiment/défense) :
+//   p4  compartiments   — 5 wall-on-entity
+//   p8  funnel          — 2 wall-on-entity
+//   p10 hdv15           — 3 wall-on-entity
+//   pA  blindspot-core  — 3 wall-on-entity
+//   pB  the-corral      — 13 wall-on-entity
+//   pC  air-grid        — 18 overlaps + wall-on-entity
+//   pD  labyrinth       — 12 overlaps + wall-on-entity
+//   pE  the-hybrid      — 4 overlaps + wall-on-entity
+// Les déclarations restent pour référence historique.
 
-// Validate all presets on module load (dev-time warnings only)
+export const BASE_PRESETS: BasePreset[] = [p1, p2, p3, p5, p6, p7, p9, pF];
+
+// Validate all presets on module load (dev-time strict check)
 if (process.env.NODE_ENV !== "production") {
-  BASE_PRESETS.forEach(validatePreset);
-  const pFErrors = validatePresetStrict(pF);
-  if (pFErrors.length > 0) {
-    console.error(`[pF] validatePresetStrict: ${pFErrors.length} erreur(s)`);
-    pFErrors.forEach((e) => console.error(`  ${e.type}: ${e.message}`));
+  let totalErrors = 0;
+  for (const p of BASE_PRESETS) {
+    const errs = validatePresetStrict(p);
+    if (errs.length > 0) {
+      totalErrors += errs.length;
+      console.error(`[${p.id}] ${errs.length} erreur(s):`);
+      errs.forEach((e) => console.error(`  ${e.type}: ${e.message}`));
+    }
   }
+  if (totalErrors === 0) console.log("[base-presets] validatePresetStrict: 0 erreur — tous les presets valides");
 }
