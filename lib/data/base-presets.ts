@@ -3,6 +3,10 @@
  * All coordinates are top-left of the footprint on the 44×44 grid.
  */
 import { type WallPlacement } from "./walls";
+import {
+  buildOccupation, isFree, inBounds, entitySize, occupyTiles,
+  type OccupationMap,
+} from "./grid-occupation";
 
 // ── PlacedDefense / PlacedBuilding shapes (mirrors SimulatorPanel's interfaces) ──
 export interface PresetDefense {
@@ -32,9 +36,49 @@ export interface BasePreset {
 // Defense sizes (footprint side length)
 const DEF_SIZE: Record<string, number> = {
   "cannon": 3, "archer-tower": 2, "mortar": 3, "air-defense": 3,
-  "wizard-tower": 3, "x-bow": 3, "inferno-tower": 3,
-  "eagle-artillery": 4, "scattershot": 4,
+  "wizard-tower": 3, "x-bow": 3, "inferno-tower": 2,
+  "eagle-artillery": 4, "scattershot": 3,
 };
+
+// Building sizes (footprint side length)
+const BLDG_SIZE: Record<string, number> = {
+  "army-camp": 4, "hero-hall": 4,
+  "barracks": 3, "dark-barracks": 3, "clan-castle": 3,
+  "gold-mine": 3, "elixir-collector": 3, "dark-elixir-drill": 3,
+  "gold-storage": 3, "elixir-storage": 3, "dark-elixir-storage": 3,
+  "laboratory": 3, "spell-factory": 3, "dark-spell-factory": 3,
+  "builder-hut": 3, "workshop": 3, "blacksmith": 3, "pet-house": 3,
+};
+
+// ── Footprint helpers ──────────────────────────────────────────────────────────
+
+/** Tile key → instanceId of the occupant. */
+type OccupiedMap = Map<string, string>;
+
+/** All tile keys covered by a size×size footprint at (x, y). */
+export function getFootprintTiles(x: number, y: number, size: number): string[] {
+  const tiles: string[] = [];
+  for (let dy = 0; dy < size; dy++)
+    for (let dx = 0; dx < size; dx++)
+      tiles.push(`${x + dx},${y + dy}`);
+  return tiles;
+}
+
+/** True if every tile of the footprint is free in `occupied`. */
+export function canPlaceFootprint(occupied: OccupiedMap, x: number, y: number, size: number): boolean {
+  return getFootprintTiles(x, y, size).every(k => !occupied.has(k));
+}
+
+/** Mark all tiles of the footprint as owned by `id`. */
+export function occupyFootprint(occupied: OccupiedMap, id: string, x: number, y: number, size: number): void {
+  for (const k of getFootprintTiles(x, y, size))
+    occupied.set(k, id);
+}
+
+/** True if (x, y) is not already occupied by a building footprint. */
+export function canPlaceWall(occupied: OccupiedMap, x: number, y: number): boolean {
+  return !occupied.has(`${x},${y}`);
+}
 
 // ── Wall helpers ───────────────────────────────────────────────────────────────
 
@@ -85,32 +129,142 @@ export function dedupeWalls(walls: WallPlacement[]): WallPlacement[] {
   });
 }
 
-/** Check for footprint overlaps and wall-over-defense overlaps. Returns true if valid. */
+/** Check all overlap types. Returns true if valid. Logs warnings but never auto-corrects. */
 export function validatePreset(preset: BasePreset): boolean {
   let ok = true;
-  const defs = preset.defenses;
-  for (let i = 0; i < defs.length; i++) {
-    const sz1 = DEF_SIZE[defs[i].defenseId] ?? 1;
-    for (let j = i + 1; j < defs.length; j++) {
-      const sz2 = DEF_SIZE[defs[j].defenseId] ?? 1;
-      const overlapX = defs[i].x < defs[j].x + sz2 && defs[i].x + sz1 > defs[j].x;
-      const overlapY = defs[i].y < defs[j].y + sz2 && defs[i].y + sz1 > defs[j].y;
-      if (overlapX && overlapY) {
-        console.warn(`[${preset.id}] Defense overlap: ${defs[i].defenseId}@(${defs[i].x},${defs[i].y}) ↔ ${defs[j].defenseId}@(${defs[j].x},${defs[j].y})`);
-        ok = false;
-      }
+  const occupied: OccupiedMap = new Map();
+
+  // ── 1. Defenses ────────────────────────────────────────────────────────────
+  for (const d of preset.defenses) {
+    const sz = DEF_SIZE[d.defenseId] ?? 1;
+    if (!canPlaceFootprint(occupied, d.x, d.y, sz)) {
+      const blocker = getFootprintTiles(d.x, d.y, sz).map(k => occupied.get(k)).find(Boolean) ?? "?";
+      console.warn(`[${preset.id}] Defense/? overlap: ${d.defenseId}(${d.instanceId})@(${d.x},${d.y}) size=${sz} collides with ${blocker}`);
+      ok = false;
     }
+    occupyFootprint(occupied, `def:${d.instanceId}`, d.x, d.y, sz);
+  }
+
+  // ── 2. Buildings (includes defense/building collisions via shared map) ─────
+  for (const b of preset.buildings) {
+    const sz = BLDG_SIZE[b.buildingId] ?? 3;
+    if (!canPlaceFootprint(occupied, b.x, b.y, sz)) {
+      const blocker = getFootprintTiles(b.x, b.y, sz).map(k => occupied.get(k)).find(Boolean) ?? "?";
+      console.warn(`[${preset.id}] Building/? overlap: ${b.buildingId}(${b.instanceId})@(${b.x},${b.y}) size=${sz} collides with ${blocker}`);
+      ok = false;
+    }
+    occupyFootprint(occupied, `bld:${b.instanceId}`, b.x, b.y, sz);
+  }
+
+  // ── 3. Walls — duplicate check + overlap with any footprint ───────────────
+  const wallSeen = new Set<string>();
+  for (const w of preset.walls) {
+    const k = `${w.x},${w.y}`;
+    if (wallSeen.has(k)) {
+      console.warn(`[${preset.id}] Duplicate wall at (${w.x},${w.y})`);
+      ok = false;
+      continue;
+    }
+    wallSeen.add(k);
+    if (!canPlaceWall(occupied, w.x, w.y)) {
+      const blocker = occupied.get(k) ?? "?";
+      console.warn(`[${preset.id}] Wall (${w.x},${w.y}) overlaps ${blocker}`);
+      ok = false;
+    }
+  }
+
+  return ok;
+}
+
+// ── Strict validation — returns structured errors ─────────────────────────────
+
+export type PresetErrorType =
+  | "out-of-bounds"
+  | "overlap"
+  | "duplicate-wall"
+  | "wall-on-entity";
+
+export interface PresetError {
+  type: PresetErrorType;
+  message: string;
+}
+
+/**
+ * Full validation returning a structured list of errors.
+ * Uses grid-occupation for authoritative size lookups.
+ * Returns [] when the preset is valid.
+ */
+export function validatePresetStrict(preset: BasePreset): PresetError[] {
+  const errors: PresetError[] = [];
+  const G = 44;
+
+  // ── 1. Out-of-bounds ──────────────────────────────────────────────────────
+  for (const d of preset.defenses) {
+    const sz = entitySize(d.defenseId);
+    if (!inBounds(d.x, d.y, sz))
+      errors.push({ type: "out-of-bounds",
+        message: `Défense hors grille: ${d.defenseId}(${d.instanceId})@(${d.x},${d.y}) size=${sz}` });
+  }
+  for (const b of preset.buildings) {
+    const sz = entitySize(b.buildingId);
+    if (!inBounds(b.x, b.y, sz))
+      errors.push({ type: "out-of-bounds",
+        message: `Bâtiment hors grille: ${b.buildingId}(${b.instanceId})@(${b.x},${b.y}) size=${sz}` });
   }
   for (const w of preset.walls) {
-    for (const d of defs) {
-      const sz = DEF_SIZE[d.defenseId] ?? 1;
-      if (w.x >= d.x && w.x < d.x + sz && w.y >= d.y && w.y < d.y + sz) {
-        console.warn(`[${preset.id}] Wall (${w.x},${w.y}) overlaps ${d.defenseId}@(${d.x},${d.y})`);
-        ok = false;
-      }
-    }
+    if (w.x < 0 || w.y < 0 || w.x >= G || w.y >= G)
+      errors.push({ type: "out-of-bounds", message: `Mur hors grille: (${w.x},${w.y})` });
   }
-  return ok;
+
+  // ── 2. Overlaps (incremental occupation) ─────────────────────────────────
+  const occ: OccupationMap = new Map();
+
+  for (const d of preset.defenses) {
+    const sz = entitySize(d.defenseId);
+    if (!isFree(occ, d.x, d.y, sz)) {
+      let blocker = "?";
+      outer: for (let dy = 0; dy < sz; dy++)
+        for (let dx = 0; dx < sz; dx++) {
+          const t = occ.get(`${d.x + dx},${d.y + dy}`);
+          if (t) { blocker = t.entityId; break outer; }
+        }
+      errors.push({ type: "overlap",
+        message: `Overlap défense: ${d.defenseId}(${d.instanceId})@(${d.x},${d.y}) ↔ ${blocker}` });
+    }
+    occupyTiles(occ, d.instanceId, "defense", d.x, d.y, sz);
+  }
+
+  for (const b of preset.buildings) {
+    const sz = entitySize(b.buildingId);
+    if (!isFree(occ, b.x, b.y, sz)) {
+      let blocker = "?";
+      outer: for (let dy = 0; dy < sz; dy++)
+        for (let dx = 0; dx < sz; dx++) {
+          const t = occ.get(`${b.x + dx},${b.y + dy}`);
+          if (t) { blocker = t.entityId; break outer; }
+        }
+      errors.push({ type: "overlap",
+        message: `Overlap bâtiment: ${b.buildingId}(${b.instanceId})@(${b.x},${b.y}) ↔ ${blocker}` });
+    }
+    occupyTiles(occ, b.instanceId, "building", b.x, b.y, sz);
+  }
+
+  // ── 3. Walls ─────────────────────────────────────────────────────────────
+  const wallSeen = new Set<string>();
+  for (const w of preset.walls) {
+    const k = `${w.x},${w.y}`;
+    if (wallSeen.has(k)) {
+      errors.push({ type: "duplicate-wall", message: `Mur dupliqué: (${w.x},${w.y})` });
+      continue;
+    }
+    wallSeen.add(k);
+    const existing = occ.get(k);
+    if (existing)
+      errors.push({ type: "wall-on-entity",
+        message: `Mur sur entité: (${w.x},${w.y}) ↔ ${existing.entityId} [${existing.kind}]` });
+  }
+
+  return errors;
 }
 
 // ── Short helpers for preset instances ────────────────────────────────────────
@@ -726,9 +880,63 @@ const pE: BasePreset = (() => {
   };
 })();
 
-export const BASE_PRESETS: BasePreset[] = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, pA, pB, pC, pD, pE];
+// ── Base F : "Core Défensif Symétrique" ──────────────────────────────────────
+//
+//  Symétrie stricte gauche/droite (axe x=22).
+//  Eagle Artillery 4×4 au centre exact (20-23, 20-23).
+//  Ring intérieur de murs + 2 piliers extérieurs canalisant les troupes.
+//  Cannons et Wizard Towers symétriques couvrent les couloirs d'approche.
+//  12 bâtiments-appâts en périphérie et mid-layer.
+
+const pF: BasePreset = (() => {
+  const D = (id: string, defenseId: string, level: number, x: number, y: number, mode?: string): PresetDefense =>
+    ({ instanceId: `F-d-${id}`, defenseId, level, x, y, ...(mode ? { mode } : {}) });
+  const B = (id: string, buildingId: string, level: number, x: number, y: number): PresetBuilding =>
+    ({ instanceId: `F-b-${id}`, buildingId, level, x, y });
+
+  const walls = dedupeWalls([
+    ...createWallRect(18, 18, 8, 8, 10, "pF-ring"),  // ring intérieur (18-25, 18-25)
+    ...createWallLine(11, 17, 11, 28, 8, "pF-wl"),   // pilier gauche  x=11, y=17-28
+    ...createWallLine(32, 17, 32, 28, 8, "pF-wr"),   // pilier droit   x=32, y=17-28
+  ]);
+
+  return {
+    id:   "core-defensif-sym",
+    name: "F. Core Défensif Symétrique",
+    description: "Eagle Artillery au cœur (22,22), 4 défenses symétriques G/D. Ring intérieur + piliers extérieurs. Bâtiments-appâts en périphérie.",
+    defenses: [
+      D("ea",  "eagle-artillery",  4, 20, 20),   // CORE — (20-23, 20-23)
+      D("ca1", "cannon",          10, 12, 20),   // gauche      — (12-14, 20-22)
+      D("ca2", "cannon",          10, 29, 20),   // droite      — (29-31, 20-22)
+      D("wt1", "wizard-tower",     8, 12, 28),   // gauche bas  — (12-14, 28-30)
+      D("wt2", "wizard-tower",     8, 29, 28),   // droite bas  — (29-31, 28-30)
+    ],
+    buildings: [
+      B("gm1", "gold-mine",        6,  7, 20),   // appât gauche milieu    — (7-9,  20-22)
+      B("gm2", "gold-mine",        6, 34, 20),   // appât droit milieu     — (34-36, 20-22)
+      B("ec1", "elixir-collector", 6,  7, 25),   // appât gauche bas       — (7-9,  25-27)
+      B("ec2", "elixir-collector", 6, 34, 25),   // appât droit bas        — (34-36, 25-27)
+      B("gs1", "gold-storage",     7,  7, 14),   // flanc gauche haut      — (7-9,  14-16)
+      B("gs2", "gold-storage",     7, 34, 14),   // flanc droit haut       — (34-36, 14-16)
+      B("ba1", "barracks",         8, 14, 14),   // mid gauche haut        — (14-16, 14-16)
+      B("ba2", "barracks",         8, 27, 14),   // mid droit haut         — (27-29, 14-16)
+      B("ac1", "army-camp",        7,  7,  7),   // coin NW (4×4)          — (7-10,  7-10)
+      B("ac2", "army-camp",        7, 33,  7),   // coin NE (4×4)          — (33-36, 7-10)
+      B("db1", "dark-barracks",    6, 14, 33),   // bas gauche             — (14-16, 33-35)
+      B("db2", "dark-barracks",    6, 27, 33),   // bas droit              — (27-29, 33-35)
+    ],
+    walls,
+  };
+})();
+
+export const BASE_PRESETS: BasePreset[] = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, pA, pB, pC, pD, pE, pF];
 
 // Validate all presets on module load (dev-time warnings only)
 if (process.env.NODE_ENV !== "production") {
   BASE_PRESETS.forEach(validatePreset);
+  const pFErrors = validatePresetStrict(pF);
+  if (pFErrors.length > 0) {
+    console.error(`[pF] validatePresetStrict: ${pFErrors.length} erreur(s)`);
+    pFErrors.forEach((e) => console.error(`  ${e.type}: ${e.message}`));
+  }
 }

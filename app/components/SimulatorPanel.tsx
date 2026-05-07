@@ -4,6 +4,10 @@ import { useState, useRef, useMemo, useEffect } from "react";
 import { TROOPS } from "../../lib/data/troops";
 import { type WallPlacement, WALL_HP, MAX_WALL_LEVEL } from "../../lib/data/walls";
 import { BASE_PRESETS, type BasePreset } from "../../lib/data/base-presets";
+import {
+  buildOccupation, isFree, inBounds, entitySize, occupantsOf, occupiedSnapshot,
+  type OccupationMap,
+} from "../../lib/data/grid-occupation";
 import { DEFENSES } from "../../lib/data/defenses";
 import { NEUTRAL_BUILDINGS } from "../../lib/data/neutral-buildings";
 import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
@@ -983,6 +987,12 @@ export default function SimulatorPanel() {
     setShowReplay(false); setReplayPlaying(false); setReplayTime(0);
   }
 
+  // Single source of truth for occupied tiles — rebuilt on every layout change.
+  const occupation = useMemo(
+    () => buildOccupation(placed, placedBuildings, placedWalls),
+    [placed, placedBuildings, placedWalls],
+  );
+
   function handleSelect(id: string | null, type: "defense" | "building" | null) {
     setSelectedId(id);
     setSelectedType(type);
@@ -1106,22 +1116,13 @@ export default function SimulatorPanel() {
 
   // Defense handlers
   function handlePlace(x: number, y: number, defenseId: string, level: number) {
-    setPlaced((prev) => {
-      const newSize = DEFENSES.find((d) => d.id === defenseId)?.size ?? 1;
-      // Hors grille
-      if (x + newSize > GRID_SIZE || y + newSize > GRID_SIZE) return prev;
-      // Chevauchement avec un bâtiment existant
-      const overlaps = prev.some((d) => {
-        const s = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
-        return !(d.x + s <= x || x + newSize <= d.x || d.y + s <= y || y + newSize <= d.y);
-      });
-      if (overlaps) return prev;
-      if (prev.length >= MAX_DEFENSES) return prev;
-      const defaultMode =
-        defenseId === "inferno-tower" ? "multi" :
-        defenseId === "x-bow"         ? "ground" : undefined;
-      return [...prev, { instanceId: `d-${Date.now()}`, defenseId, level, x, y, mode: defaultMode }];
-    });
+    const size = entitySize(defenseId);
+    if (!inBounds(x, y, size) || !isFree(occupation, x, y, size)) return;
+    if (placed.length >= MAX_DEFENSES) return;
+    const defaultMode =
+      defenseId === "inferno-tower" ? "multi" :
+      defenseId === "x-bow"         ? "ground" : undefined;
+    setPlaced((prev) => [...prev, { instanceId: `d-${Date.now()}`, defenseId, level, x, y, mode: defaultMode }]);
     clearResult();
   }
 
@@ -1145,20 +1146,10 @@ export default function SimulatorPanel() {
   }
 
   function handlePlaceBuilding(x: number, y: number, buildingId: string, level: number) {
-    setPlacedBuildings((prev) => {
-      if (prev.length >= MAX_BUILDINGS) return prev;
-      const size = NEUTRAL_BUILDINGS.find((b) => b.id === buildingId)?.size ?? 1;
-      if (x + size > GRID_SIZE || y + size > GRID_SIZE) return prev;
-      const allPlaced = [...placed, ...prev.map((b) => ({ ...b, defenseId: b.buildingId }))];
-      const overlaps = allPlaced.some((d) => {
-        const s = (DEFENSES.find((def) => def.id === (d as PlacedDefense).defenseId)?.size)
-               ?? (NEUTRAL_BUILDINGS.find((nb) => nb.id === (d as PlacedBuilding).buildingId)?.size)
-               ?? 1;
-        return !(d.x + s <= x || x + size <= d.x || d.y + s <= y || y + size <= d.y);
-      });
-      if (overlaps) return prev;
-      return [...prev, { instanceId: `nb-${Date.now()}`, buildingId, level, x, y }];
-    });
+    const size = entitySize(buildingId);
+    if (!inBounds(x, y, size) || !isFree(occupation, x, y, size)) return;
+    if (placedBuildings.length >= MAX_BUILDINGS) return;
+    setPlacedBuildings((prev) => [...prev, { instanceId: `nb-${Date.now()}`, buildingId, level, x, y }]);
     clearResult();
   }
 
@@ -1168,44 +1159,70 @@ export default function SimulatorPanel() {
   }
 
   function handleMoveBuilding(instanceId: string, toX: number, toY: number) {
-    setPlacedBuildings((prev) => {
-      const bld = prev.find((b) => b.instanceId === instanceId);
-      if (!bld) return prev;
-      const size = NEUTRAL_BUILDINGS.find((nb) => nb.id === bld.buildingId)?.size ?? 1;
-      if (toX + size > GRID_SIZE || toY + size > GRID_SIZE) return prev;
-      const others = prev.filter((b) => b.instanceId !== instanceId);
-      const allOthers = [...placed, ...others.map((b) => ({ ...b, defenseId: b.buildingId }))];
-      const overlaps = allOthers.some((d) => {
-        const s = (DEFENSES.find((def) => def.id === (d as PlacedDefense).defenseId)?.size)
-               ?? (NEUTRAL_BUILDINGS.find((nb) => nb.id === (d as PlacedBuilding).buildingId)?.size)
-               ?? 1;
-        return !(d.x + s <= toX || toX + size <= d.x || d.y + s <= toY || toY + size <= d.y);
-      });
-      if (overlaps) return prev;
-      return prev.map((b) => b.instanceId === instanceId ? { ...b, x: toX, y: toY } : b);
-    });
+    const bld = placedBuildings.find((b) => b.instanceId === instanceId);
+    if (!bld) return;
+    const size = entitySize(bld.buildingId);
+    if (!inBounds(toX, toY, size)) return;
+
+    // Occupation excluding the moving building
+    const mapWithout = buildOccupation(placed, placedBuildings.filter((b) => b.instanceId !== instanceId), placedWalls);
+
+    if (isFree(mapWithout, toX, toY, size)) {
+      setPlacedBuildings((prev) => prev.map((b) => b.instanceId === instanceId ? { ...b, x: toX, y: toY } : b));
+    } else {
+      // Swap with a single building occupant
+      const occs = occupantsOf(mapWithout, toX, toY, size);
+      if (occs.length !== 1) return;
+      const otherId  = occs[0];
+      const other    = placedBuildings.find((b) => b.instanceId === otherId);
+      if (!other) return; // occupied by defense or wall — no swap
+      const otherSize = entitySize(other.buildingId);
+      const mapWithoutBoth = buildOccupation(
+        placed,
+        placedBuildings.filter((b) => b.instanceId !== instanceId && b.instanceId !== otherId),
+        placedWalls,
+      );
+      if (!inBounds(bld.x, bld.y, otherSize) || !isFree(mapWithoutBoth, bld.x, bld.y, otherSize)) return;
+      setPlacedBuildings((prev) => prev.map((b) => {
+        if (b.instanceId === instanceId) return { ...b, x: toX,  y: toY  };
+        if (b.instanceId === otherId)    return { ...b, x: bld.x, y: bld.y };
+        return b;
+      }));
+    }
     setReplayPlaying(false); setShowReplay(false); setResult(null); setMeta([]);
   }
 
   function handleMove(instanceId: string, toX: number, toY: number) {
-    setPlaced((prev) => {
-      const defense = prev.find((d) => d.instanceId === instanceId);
-      if (!defense) return prev;
-      const newSize = DEFENSES.find((d) => d.id === defense.defenseId)?.size ?? 1;
-      if (toX + newSize > GRID_SIZE || toY + newSize > GRID_SIZE) return prev;
-      const others = prev.filter((d) => d.instanceId !== instanceId);
-      const overlaps = others.some((d) => {
-        const s = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
-        return !(d.x + s <= toX || toX + newSize <= d.x || d.y + s <= toY || toY + newSize <= d.y);
-      });
-      if (overlaps) return prev;
-      return prev.map((d) => d.instanceId === instanceId ? { ...d, x: toX, y: toY } : d);
-    });
-    // Stop replay/simulation when a building is moved
-    setReplayPlaying(false);
-    setShowReplay(false);
-    setResult(null);
-    setMeta([]);
+    const defense = placed.find((d) => d.instanceId === instanceId);
+    if (!defense) return;
+    const size = entitySize(defense.defenseId);
+    if (!inBounds(toX, toY, size)) return;
+
+    // Occupation excluding the moving defense
+    const mapWithout = buildOccupation(placed.filter((d) => d.instanceId !== instanceId), placedBuildings, placedWalls);
+
+    if (isFree(mapWithout, toX, toY, size)) {
+      setPlaced((prev) => prev.map((d) => d.instanceId === instanceId ? { ...d, x: toX, y: toY } : d));
+    } else {
+      // Swap with a single defense occupant
+      const occs = occupantsOf(mapWithout, toX, toY, size);
+      if (occs.length !== 1) return;
+      const otherId   = occs[0];
+      const other     = placed.find((d) => d.instanceId === otherId);
+      if (!other) return; // occupied by building or wall — no swap
+      const otherSize = entitySize(other.defenseId);
+      const mapWithoutBoth = buildOccupation(
+        placed.filter((d) => d.instanceId !== instanceId && d.instanceId !== otherId),
+        placedBuildings, placedWalls,
+      );
+      if (!inBounds(defense.x, defense.y, otherSize) || !isFree(mapWithoutBoth, defense.x, defense.y, otherSize)) return;
+      setPlaced((prev) => prev.map((d) => {
+        if (d.instanceId === instanceId) return { ...d, x: toX,      y: toY      };
+        if (d.instanceId === otherId)    return { ...d, x: defense.x, y: defense.y };
+        return d;
+      }));
+    }
+    setReplayPlaying(false); setShowReplay(false); setResult(null); setMeta([]);
   }
 
   function handleSimulate() {
@@ -1357,24 +1374,15 @@ export default function SimulatorPanel() {
             onDeleteSelected={handleDeleteSelected}
             dragGhostSize={dragItemSize}
             onDragEnd={() => setDragItemSize(1)}
+            occupationMap={occupation}
+            onDragEntityStart={(sz) => setDragItemSize(sz)}
             wallMode={wallMode}
             wallLevel={wallLevel}
             placedWalls={placedWalls}
             onPlaceWall={(x, y) => {
-              if (placedWalls.some((w) => w.x === x && w.y === y)) return;
-              // Bloquer si case occupée par une défense
-              const onDefense = placed.some((d) => {
-                const sz = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
-                return x >= d.x && x < d.x + sz && y >= d.y && y < d.y + sz;
-              });
-              if (onDefense) return;
-              // Bloquer si case occupée par un bâtiment neutre
-              const onBuilding = placedBuildings.some((b) => {
-                const sz = NEUTRAL_BUILDINGS.find((nb) => nb.id === b.buildingId)?.size ?? 1;
-                return x >= b.x && x < b.x + sz && y >= b.y && y < b.y + sz;
-              });
-              if (onBuilding) return;
-              // Bloquer si case occupée par une troupe placée manuellement
+              // Unified check: occupation map already covers defenses + buildings + existing walls
+              if (!isFree(occupation, x, y, 1)) return;
+              // Troops are not in the occupation map — check separately
               if (placedTroops.some((t) => t.x === x && t.y === y)) return;
               const key = `${x},${y}`;
               setPlacedWalls((prev) => [...prev, { instanceId: `w-${key}-${Date.now()}`, x, y, level: wallLevel }]);
@@ -1857,6 +1865,8 @@ function BattleGrid({
   onPlaceTroop,
   onRemovePlacedTroop,
   hpOnDamageOnly,
+  occupationMap,
+  onDragEntityStart,
 }: {
   placed: PlacedDefense[];
   onPlace: (x: number, y: number, defenseId: string, level: number) => void;
@@ -1896,6 +1906,8 @@ function BattleGrid({
   onDeleteSelected?: () => void;
   dragGhostSize?: number;
   onDragEnd?: () => void;
+  occupationMap?: OccupationMap;
+  onDragEntityStart?: (size: number) => void;
   wallMode?: boolean;
   wallLevel?: number;
   placedWalls?: WallPlacement[];
@@ -1905,6 +1917,7 @@ function BattleGrid({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell,          setDragCell]          = useState<string | null>(null);
+  const [dragEntityId,      setDragEntityId]      = useState<string | null>(null);
   const [hoveredDefenseId,  setHoveredDefenseId]  = useState<string | null>(null);
   const [cellPx, setCellPx] = useState<number>(CELL);
 
@@ -1992,7 +2005,10 @@ function BattleGrid({
   }
 
   function onDragLeave(e: React.DragEvent) {
-    if (!containerRef.current?.contains(e.relatedTarget as Node | null)) setDragCell(null);
+    if (!containerRef.current?.contains(e.relatedTarget as Node | null)) {
+      setDragCell(null);
+      setDragEntityId(null);
+    }
   }
 
   function buildingAt(tileX: number, tileY: number) {
@@ -2006,6 +2022,7 @@ function BattleGrid({
     e.preventDefault();
     const c = cellAt(e);
     setDragCell(null);
+    setDragEntityId(null);
     if (!c) return;
     try {
       const payload = JSON.parse(e.dataTransfer.getData("text/plain"));
@@ -2154,6 +2171,8 @@ function BattleGrid({
 
   // Drag-start handler for already-placed defenses (move gesture)
   function defDragStart(e: React.DragEvent, d: PlacedDefense, size: number) {
+    setDragEntityId(d.instanceId);
+    onDragEntityStart?.(size);
     e.dataTransfer.setData("text/plain", JSON.stringify({ existingInstanceId: d.instanceId, defenseId: d.defenseId, level: d.level, mode: d.mode }));
     e.dataTransfer.effectAllowed = "move";
     const fill   = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
@@ -2181,6 +2200,8 @@ function BattleGrid({
         draggable
         title={`${name} Lv${b.level} (${b.x},${b.y}) — glisser: déplacer · clic: supprimer`}
         onDragStart={(e) => {
+          setDragEntityId(b.instanceId);
+          onDragEntityStart?.(size);
           e.dataTransfer.setData("text/plain", JSON.stringify({ existingBuildingInstanceId: b.instanceId, buildingId: b.buildingId, level: b.level }));
           e.dataTransfer.effectAllowed = "move";
           const tilePx = Math.round(cellPx * size);
@@ -2271,29 +2292,36 @@ function BattleGrid({
             />
           );
         })()}
-        {/* Drag-over ghost — footprint réel (dragGhostSize × dragGhostSize) */}
+        {/* Drag-over ghost — footprint réel, vérifié via occupation map unifiée */}
         {dragCell && (() => {
           const gx = parseInt(dragCell.split(",")[0]);
           const gy = parseInt(dragCell.split(",")[1]);
           const gs = Math.max(1, dragGhostSize);
-          // Simple collision check against placed defenses/buildings/walls
-          let valid = true;
-          for (const d of placed) {
-            const sz = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;
-            if (gx < d.x + sz && gx + gs > d.x && gy < d.y + sz && gy + gs > d.y) { valid = false; break; }
-          }
-          if (valid) for (const b of (placedBuildings ?? [])) {
-            const sz = NEUTRAL_BUILDINGS.find((nb) => nb.id === b.buildingId)?.size ?? 1;
-            if (gx < b.x + sz && gx + gs > b.x && gy < b.y + sz && gy + gs > b.y) { valid = false; break; }
-          }
-          const fill   = valid ? "rgba(34,197,94,0.15)"  : "rgba(239,68,68,0.15)";
-          const stroke = valid ? "#22c55e"                : "#ef4444";
+          const withinBounds = inBounds(gx, gy, gs);
+          const free = occupationMap
+            ? isFree(occupationMap, gx, gy, gs, dragEntityId ?? undefined)
+            : true;
+          const canSwap = !free && occupationMap && dragEntityId
+            ? occupantsOf(occupationMap, gx, gy, gs, dragEntityId).length === 1
+            : false;
+          const valid = withinBounds && free;
+          const fill   = valid ? "rgba(34,197,94,0.15)"  : canSwap ? "rgba(251,191,36,0.15)" : "rgba(239,68,68,0.15)";
+          const stroke = valid ? "#22c55e"                : canSwap ? "#fbbf24"               : "#ef4444";
           return (
-            <rect
-              x={gx * cellPx + 0.5} y={gy * cellPx + 0.5}
-              width={gs * cellPx - 1} height={gs * cellPx - 1}
-              fill={fill} stroke={stroke} strokeWidth={1.5} rx={2}
-            />
+            <>
+              <rect
+                x={gx * cellPx + 0.5} y={gy * cellPx + 0.5}
+                width={gs * cellPx - 1} height={gs * cellPx - 1}
+                fill={fill} stroke={stroke} strokeWidth={1.5} rx={2}
+              />
+              {canSwap && (
+                <text
+                  x={(gx + gs / 2) * cellPx} y={(gy + gs / 2) * cellPx + 4}
+                  textAnchor="middle" fontSize={Math.max(7, gs * cellPx * 0.3)}
+                  fill="#fbbf24" opacity={0.9} style={{ pointerEvents: "none", userSelect: "none" }}
+                >⇄</text>
+              )}
+            </>
           );
         })()}
         {/* Range circle for hovered defense */}
@@ -2416,6 +2444,22 @@ function BattleGrid({
         {(placedWalls ?? []).map((w) =>
           renderWallSvg(w.level, w.x * cellPx, w.y * cellPx, cellPx)
         )}
+        {/* Debug occupation overlay — tiles occupées par kind */}
+        {debugMode && occupationMap && occupiedSnapshot(occupationMap).map(({ x, y, kind }) => {
+          const fill   = kind === "defense"  ? "rgba(239,68,68,0.18)"
+                       : kind === "building" ? "rgba(251,191,36,0.18)"
+                       :                      "rgba(234,179,8,0.12)";
+          const stroke = kind === "defense"  ? "rgba(239,68,68,0.5)"
+                       : kind === "building" ? "rgba(251,191,36,0.5)"
+                       :                      "rgba(234,179,8,0.35)";
+          return (
+            <rect key={`dbg-${x}-${y}`}
+              x={x * cellPx} y={y * cellPx}
+              width={cellPx} height={cellPx}
+              fill={fill} stroke={stroke} strokeWidth={0.4}
+            />
+          );
+        })}
         {/* Defense hitboxes — white outline on full size×size footprint */}
         {placed.map((d) => {
           const size = DEFENSES.find((def) => def.id === d.defenseId)?.size ?? 1;

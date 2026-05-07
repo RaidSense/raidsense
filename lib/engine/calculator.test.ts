@@ -6,7 +6,7 @@
  */
 
 import { simulateAttack } from "./calculator";
-import type { TroopDeployment, DefensePlacement } from "./calculator";
+import type { TroopDeployment, DefensePlacement, BuildingPlacement } from "./calculator";
 
 // ---------------------------------------------------------------------------
 // Scenario
@@ -148,3 +148,44 @@ if (casualties.length > 0) {
 }
 
 console.log("\n" + LINE + "\n");
+
+// ---------------------------------------------------------------------------
+// Scénario 2 — Ciblage PEKKA (préférence "None")
+//
+// Setup :
+//   - 1 PEKKA Lv5 droppé en (10, 21)
+//   - 1 Gold Mine  (bâtiment neutre, taille 3) centré en (16, 21) → ≈4.5 tuiles de distance
+//   - 1 Cannon Lv10 (défense,      taille 3) centré en (32, 21) → ≈20.5 tuiles de distance
+//
+// Résultat attendu : PEKKA cible la Gold Mine (plus proche) et non le Cannon.
+// ---------------------------------------------------------------------------
+
+const pekka: TroopDeployment[] = [
+  { instanceId: "pekka1", troopId: "pekka", level: 5, dropPosition: { x: 10, y: 21 } },
+];
+
+const farCannon: DefensePlacement[] = [
+  { instanceId: "far-cannon", defenseId: "cannon", level: 10, position: { x: 32, y: 21 } },
+];
+
+const nearBuilding: BuildingPlacement[] = [
+  { instanceId: "near-goldmine", buildingId: "gold-mine", level: 6, position: { x: 16, y: 21 } },
+];
+
+const result2 = simulateAttack(pekka, farCannon, nearBuilding);
+
+const pekkaResult = result2.troops["pekka1"];
+const firstTarget = pekkaResult.targetPerSecond[0];
+const passed = firstTarget === "near-goldmine";
+
+console.log(LINE);
+console.log("  Scénario 2 — Ciblage PEKKA (preferredTarget = \"None\")");
+console.log(LINE);
+console.log(`  PEKKA drop    : (10, 21)`);
+console.log(`  Gold Mine     : centre (16, 21)  →  dist ≈ 4.5 tuiles`);
+console.log(`  Cannon Lv10   : centre (32, 21)  →  dist ≈ 20.5 tuiles`);
+console.log("");
+console.log(`  Première cible : ${firstTarget ?? "(aucune)"}`);
+console.log(`  Attendu        : near-goldmine`);
+console.log(`  Résultat       : ${passed ? "✅ PASS — PEKKA cible bien le bâtiment le plus proche" : "❌ FAIL — PEKKA cible une défense au lieu du bâtiment proche"}`);
+console.log(LINE + "\n");
