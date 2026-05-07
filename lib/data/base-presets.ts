@@ -42,7 +42,7 @@ const DEF_SIZE: Record<string, number> = {
 
 // Building sizes (footprint side length)
 const BLDG_SIZE: Record<string, number> = {
-  "army-camp": 4, "hero-hall": 4,
+  "army-camp": 4, "hero-hall": 4, "town-hall": 4,
   "barracks": 3, "dark-barracks": 3, "clan-castle": 3,
   "gold-mine": 3, "elixir-collector": 3, "dark-elixir-drill": 3,
   "gold-storage": 3, "elixir-storage": 3, "dark-elixir-storage": 3,

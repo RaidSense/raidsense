@@ -1418,6 +1418,41 @@ export const NEUTRAL_BUILDINGS = [
       "blocksGroundPathing": true,
       "blocksAirPathing": false
     }
+  },
+  {
+    "id": "town-hall",
+    "name": "Hôtel de Ville",
+    "category": "special",
+    "size": 4,
+    "levels": [
+      { "level":  1, "hp":   450, "townHall":  1 },
+      { "level":  2, "hp":  1600, "townHall":  2 },
+      { "level":  3, "hp":  1850, "townHall":  3 },
+      { "level":  4, "hp":  2100, "townHall":  4 },
+      { "level":  5, "hp":  2400, "townHall":  5 },
+      { "level":  6, "hp":  2800, "townHall":  6 },
+      { "level":  7, "hp":  3300, "townHall":  7 },
+      { "level":  8, "hp":  3900, "townHall":  8 },
+      { "level":  9, "hp":  4600, "townHall":  9 },
+      { "level": 10, "hp":  5500, "townHall": 10 },
+      { "level": 11, "hp":  6800, "townHall": 11 },
+      { "level": 12, "hp":  7500, "townHall": 12 },
+      { "level": 13, "hp":  8200, "townHall": 13 },
+      { "level": 14, "hp":  8900, "townHall": 14 },
+      { "level": 15, "hp":  9600, "townHall": 15 }
+    ],
+    "targetTags": ["building", "special"],
+    "canAttack": false,
+    "isDefense": false,
+    "isNeutral": true,
+    "maxTownHallIncluded": 15,
+    "behavior": {
+      "attack": "none",
+      "targetableBy": ["building", "special"],
+      "blocksGroundPathing": true,
+      "blocksAirPathing": false
+    },
+    "notes": "TH 12-15 : arme activable (Giga Tesla / Giga Tour de l'Enfer) — logique dans calculator.ts."
   }
 ] as const;
 

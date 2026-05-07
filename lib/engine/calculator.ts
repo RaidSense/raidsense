@@ -3,6 +3,7 @@ import { getDefenseById, type TargetType } from "../data/defenses";
 import { getNeutralBuildingById } from "../data/neutral-buildings";
 import { type WallPlacement, WALL_HP } from "../data/walls";
 import { dijkstraPath, adjacentTilesForFootprint, type PathResult } from "./pathfinding";
+import { TOWN_HALL_DATA } from "../data/town-halls";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -330,6 +331,9 @@ interface TroopState {
   positionHistory: Vec2[];
   deployAt: number;   // seconds — troop activates when simTime reaches this
   isActive: boolean;  // false until deployAt is reached
+  // ── TH death-zone debuffs ────────────────────────────────────────────────
+  speedMultiplier:  number;   // 1.0 = normal; reduced by TH slow zones
+  attackMultiplier: number;   // 1.0 = normal; reduced by TH slow zones
 }
 
 interface DefenseState {
@@ -382,12 +386,39 @@ interface BuildingState {
   instanceId:  string;
   buildingId:  string;
   hp:          number;
-  size:        number;   // footprint side length in tiles
+  size:        number;
   targetTags:  readonly string[];
   position:    Vec2;
   alive:       boolean;
   destroyedAt: number | null;
   hpHistory:   number[];
+  level:       number;
+  maxHp:       number;
+  // ── TH 12–15 weapon (0 = no weapon) ─────────────────────────────────────
+  weaponDps:            number;
+  weaponTargetCount:    number;
+  weaponRange:          number;
+  weaponAttackSpeed:    number;
+  weaponAttackCooldown: number;
+  isWeaponActive:       boolean;
+  // ── Death effect ─────────────────────────────────────────────────────────
+  deathDamage:             number;
+  deathRadius:             number;
+  deathEffectDps:          number;
+  deathEffectSlow:         number;   // 1.0 = no slow
+  deathEffectDuration:     number;
+  deathEffectRadius:       number;
+  deathExplosionTriggered: boolean;
+}
+
+/** Active death-effect zone left by a destroyed TH 12–15. */
+interface THDeathZone {
+  sourceInstId:  string;
+  position:      Vec2;
+  radius:        number;
+  dps:           number;
+  slowMultiplier: number;
+  endTime:       number;
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +555,8 @@ export function simulateAttack(
       positionHistory: [],
       deployAt:  dep.deployAt ?? 0,
       isActive:  (dep.deployAt ?? 0) <= 0,
+      speedMultiplier:  1,
+      attackMultiplier: 1,
     });
   }
 
@@ -592,6 +625,7 @@ export function simulateAttack(
     if (!levelData)
       throw new Error(`Level ${pl.level} not found for building "${pl.buildingId}"`);
 
+    const thW = pl.buildingId === "town-hall" ? TOWN_HALL_DATA[pl.level]?.weapon : undefined;
     buildings.set(pl.instanceId, {
       instanceId:  pl.instanceId,
       buildingId:  pl.buildingId,
@@ -602,6 +636,21 @@ export function simulateAttack(
       alive:       true,
       destroyedAt: null,
       hpHistory:   [],
+      level:       pl.level,
+      maxHp:       levelData.hp,
+      weaponDps:            thW?.dps               ?? 0,
+      weaponTargetCount:    thW?.targetCount        ?? 0,
+      weaponRange:          thW?.range              ?? 0,
+      weaponAttackSpeed:    thW?.attackSpeed        ?? 0,
+      weaponAttackCooldown: thW?.attackSpeed        ?? 0,
+      isWeaponActive:       false,
+      deathDamage:          thW?.deathDamage        ?? 0,
+      deathRadius:          thW?.deathExplosionRadius ?? 0,
+      deathEffectDps:       thW?.deathEffectDps     ?? 0,
+      deathEffectSlow:      thW?.deathEffectSlow    ?? 1,
+      deathEffectDuration:  thW?.deathEffectDuration ?? 0,
+      deathEffectRadius:    thW?.deathEffectRadius  ?? 0,
+      deathExplosionTriggered: false,
     });
   }
 
@@ -619,6 +668,9 @@ export function simulateAttack(
 
   // Version counter — increments whenever a wall dies so troops recompute BFS
   let wallVersion = 0;
+
+  // Active death-effect zones from destroyed TH 12-15
+  let thDeathZones: THDeathZone[] = [];
 
   /** Pre-built Set<"x,y"> of currently alive wall tiles (rebuilt on demand). */
   function buildBlockedSet(): Set<string> {
@@ -921,6 +973,15 @@ export function simulateAttack(
       }
     }
 
+    // --- TH weapon activation (fires on first damage) ------------------------
+    // TODO: add 51 % HP alternative activation trigger (real CoC behaviour)
+    for (const bld of buildings.values()) {
+      if (!bld.isWeaponActive && bld.weaponDps > 0 && bld.alive && bld.hp < bld.maxHp) {
+        bld.isWeaponActive = true;
+        if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] HDV ACTIVÉ ${bld.instanceId} Lv${bld.level}`);
+      }
+    }
+
     // --- Defense phase: each defense fires at a troop in range ---------------
 
     for (const def of defenses.values()) {
@@ -1077,6 +1138,27 @@ export function simulateAttack(
       def.attackCooldown = def.attackSpeed;
     }
 
+    // --- TH 12-15 activated weapon (multi-target, Inferno-like) ---------------
+    for (const bld of buildings.values()) {
+      if (!bld.alive || !bld.isWeaponActive || bld.weaponDps === 0) continue;
+      bld.weaponAttackCooldown -= TICK;
+      if (bld.weaponAttackCooldown > 0) continue;
+      const candidates: { dist: number; t: TroopState }[] = [];
+      for (const t of troops.values()) {
+        if (!t.alive || !t.isActive || t.isUnderground) continue;
+        const d = euclidean(bld.position, { x: t.position.x + 0.5, y: t.position.y + 0.5 });
+        if (d <= bld.weaponRange) candidates.push({ dist: d, t });
+      }
+      candidates.sort((a, b) => a.dist - b.dist);
+      for (const { t } of candidates.slice(0, bld.weaponTargetCount)) {
+        const actual = Math.min(bld.weaponDps * bld.weaponAttackSpeed, t.hp);
+        t.hp -= actual;
+        if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
+        if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] HDV ATTAQUE ${bld.instanceId} → ${t.instanceId} | ${actual.toFixed(0)} dégâts`);
+      }
+      bld.weaponAttackCooldown = bld.weaponAttackSpeed;
+    }
+
     // --- Troop phase: each troop moves or attacks a defense / building -------
 
     // Diminishing returns: count alive & active healers this tick.
@@ -1148,7 +1230,7 @@ export function simulateAttack(
             troop.healVisualCooldown = troop.attackSpeed;
           }
         } else {
-          troop.position = stepToward(troop.position, healTarget.position, troop.speed * TICK);
+          troop.position = stepToward(troop.position, healTarget.position, troop.speed * TICK * troop.speedMultiplier);
         }
         continue;
       }
@@ -1208,7 +1290,7 @@ export function simulateAttack(
       }
 
       if (distToFootprint <= troop.attackRange) {
-        troop.attackCooldown -= TICK;
+        troop.attackCooldown -= TICK * troop.attackMultiplier;
         if (troop.attackCooldown <= 0) {
           // Baby Dragon rage: dégâts ×2, vitesse d'attaque ×1.5
           const isEnragedBD          = troop.troopId === "baby-dragon" && troop.isEnraged;
@@ -1328,7 +1410,7 @@ export function simulateAttack(
             // Still locked → attack the wall
             const wallCenter = { x: wall.x + 0.5, y: wall.y + 0.5 };
             if (euclidean(troop.position, wallCenter) <= troop.attackRange + 0.5) {
-              troop.attackCooldown -= TICK;
+              troop.attackCooldown -= TICK * troop.attackMultiplier;
               if (troop.attackCooldown <= 0) {
                 const isEnragedBD = troop.troopId === "baby-dragon" && troop.isEnraged;
                 const effAS  = isEnragedBD ? troop.attackSpeed / 1.5 : troop.attackSpeed;
@@ -1342,7 +1424,7 @@ export function simulateAttack(
                 troop.attackCooldown = effAS;
               }
             } else {
-              troop.position = stepToward(troop.position, wallCenter, troop.speed * TICK);
+              troop.position = stepToward(troop.position, wallCenter, troop.speed * TICK * troop.speedMultiplier);
             }
           }
         }
@@ -1401,7 +1483,7 @@ export function simulateAttack(
         if (troop.bfsPath.length > 0) {
           const wp    = troop.bfsPath[0];
           const wpCtr = { x: wp.x + 0.5, y: wp.y + 0.5 };
-          const step  = troop.speed * TICK;
+          const step  = troop.speed * TICK * troop.speedMultiplier;
           if (euclidean(troop.position, wpCtr) <= step + 0.05) {
             troop.position = { ...wpCtr };
             troop.bfsPath.shift();
@@ -1410,11 +1492,11 @@ export function simulateAttack(
           }
         } else if (!troop.wallAttackId) {
           // Fallback straight line (e.g. empty walls map or goal already adjacent)
-          troop.position = stepToward(troop.position, targetEntity.position, troop.speed * TICK);
+          troop.position = stepToward(troop.position, targetEntity.position, troop.speed * TICK * troop.speedMultiplier);
         }
       } else {
         // No walls (or air unit / miner) — straight line
-        troop.position = stepToward(troop.position, targetEntity.position, troop.speed * TICK);
+        troop.position = stepToward(troop.position, targetEntity.position, troop.speed * TICK * troop.speedMultiplier);
       }
     }
 
@@ -1471,6 +1553,53 @@ export function simulateAttack(
           damage:       troop.deathDamage,
           splashRadius: DEATH_LIGHTNING_SPLASH,
         });
+      }
+    }
+
+    // --- TH death explosions + lingering zones --------------------------------
+    for (const bld of buildings.values()) {
+      if (!bld.alive && !bld.deathExplosionTriggered && bld.deathDamage > 0) {
+        bld.deathExplosionTriggered = true;
+        if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] HDV DÉTRUIT ${bld.instanceId} Lv${bld.level} — explosion ${bld.deathDamage} HP r=${bld.deathRadius}`);
+        for (const t of troops.values()) {
+          if (!t.alive || !t.isActive) continue;
+          if (euclidean(t.position, bld.position) <= bld.deathRadius) {
+            const actual = Math.min(bld.deathDamage, t.hp);
+            t.hp -= actual;
+            if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
+            if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] HDV EFFET DE MORT → ${t.instanceId} dégâts=${actual.toFixed(0)}`);
+          }
+        }
+        if (bld.deathEffectDuration > 0) {
+          thDeathZones.push({
+            sourceInstId:  bld.instanceId,
+            position:      { ...bld.position },
+            radius:        bld.deathEffectRadius > 0 ? bld.deathEffectRadius : bld.deathRadius,
+            dps:           bld.deathEffectDps,
+            slowMultiplier: bld.deathEffectSlow,
+            endTime:       simTime + bld.deathEffectDuration,
+          });
+          if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] HDV EFFET DE MORT zone créée (dur=${bld.deathEffectDuration}s slow=${bld.deathEffectSlow})`);
+        }
+      }
+    }
+
+    // --- TH death-zone: slow + DPS (reset multipliers each tick) -------------
+    thDeathZones = thDeathZones.filter((z) => z.endTime > simTime);
+    for (const t of troops.values()) { t.speedMultiplier = 1.0; t.attackMultiplier = 1.0; }
+    for (const zone of thDeathZones) {
+      for (const t of troops.values()) {
+        if (!t.alive || !t.isActive) continue;
+        if (euclidean(t.position, zone.position) > zone.radius) continue;
+        if (zone.dps > 0) {
+          const actual = Math.min(zone.dps * TICK, t.hp);
+          t.hp -= actual;
+          if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
+        }
+        if (zone.slowMultiplier < 1.0) {
+          t.speedMultiplier  = Math.min(t.speedMultiplier,  zone.slowMultiplier);
+          t.attackMultiplier = Math.min(t.attackMultiplier, zone.slowMultiplier);
+        }
       }
     }
 
