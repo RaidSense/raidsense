@@ -4,6 +4,7 @@ import { useState, useRef, useMemo, useEffect } from "react";
 import { TROOPS } from "../../lib/data/troops";
 import { type WallPlacement, WALL_HP, MAX_WALL_LEVEL } from "../../lib/data/walls";
 import { BASE_PRESETS, type BasePreset } from "../../lib/data/base-presets";
+import { TOWN_HALL_DATA } from "../../lib/data/town-halls";
 import {
   buildOccupation, isFree, inBounds, entitySize, occupantsOf, occupiedSnapshot,
   type OccupationMap,
@@ -1919,6 +1920,7 @@ function BattleGrid({
   const [dragCell,          setDragCell]          = useState<string | null>(null);
   const [dragEntityId,      setDragEntityId]      = useState<string | null>(null);
   const [hoveredDefenseId,  setHoveredDefenseId]  = useState<string | null>(null);
+  const [hoveredBuildingId, setHoveredBuildingId] = useState<string | null>(null);
   const [cellPx, setCellPx] = useState<number>(CELL);
 
   // Delete key removes selected element
@@ -1993,8 +1995,10 @@ function BattleGrid({
 
   function onMouseMove(e: React.MouseEvent) {
     const c = cellAt(e);
-    const id = c ? (defenseAt(c.x, c.y)?.instanceId ?? null) : null;
-    setHoveredDefenseId((prev) => (prev === id ? prev : id));
+    const id    = c ? (defenseAt(c.x, c.y)?.instanceId  ?? null) : null;
+    const bldId = c ? (buildingAt(c.x, c.y)?.instanceId ?? null) : null;
+    setHoveredDefenseId((prev)  => (prev === id    ? prev : id));
+    setHoveredBuildingId((prev) => (prev === bldId ? prev : bldId));
   }
 
   function onDragOver(e: React.DragEvent) {
@@ -2262,7 +2266,7 @@ function BattleGrid({
       onMouseDown={onMouseDown}
       onMouseMove={(e) => { onMouseMove(e); onMouseMoveDrag(e); }}
       onMouseUp={onMouseUp}
-      onMouseLeave={() => { setHoveredDefenseId(null); onWallDragState?.(false); }}
+      onMouseLeave={() => { setHoveredDefenseId(null); setHoveredBuildingId(null); onWallDragState?.(false); }}
     >
       {/* Neutral buildings (behind defenses) */}
       {buildingSquares}
@@ -2361,6 +2365,29 @@ function BattleGrid({
               {minR > 0 && (
                 <circle cx={cx} cy={cy} r={minR} fill="none" stroke={color} strokeWidth={1} strokeOpacity={0.55} strokeDasharray="5 3" />
               )}
+            </g>
+          );
+        })()}
+        {/* Range circle for hovered TH 12-15 (Giga Tesla / Giga Inferno) */}
+        {/* TODO: confirm exact weapon range when real data available — V1 uses 10 */}
+        {(() => {
+          if (!hoveredBuildingId) return null;
+          const b = (placedBuildings ?? []).find((b) => b.instanceId === hoveredBuildingId);
+          if (!b || b.buildingId !== "town-hall" || b.level < 12) return null;
+          const weapon = TOWN_HALL_DATA[b.level]?.weapon;
+          if (!weapon) return null;
+          const size  = 4; // town-hall footprint
+          const cx    = (b.x + size / 2) * cellPx;
+          const cy    = (b.y + size / 2) * cellPx;
+          const maxR  = weapon.range * cellPx;
+          const color = "#6366f1"; // indigo — matches "special" category
+          const arc   = (r: number) =>
+            `M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${2 * r} 0 a ${r} ${r} 0 1 0 ${-2 * r} 0`;
+          return (
+            <g>
+              <path d={arc(maxR)} fillRule="evenodd" fill={`${color}28`} />
+              <circle cx={cx} cy={cy} r={maxR}
+                fill="none" stroke={color} strokeWidth={1.5} strokeOpacity={0.75} strokeDasharray="5 3" />
             </g>
           );
         })()}
