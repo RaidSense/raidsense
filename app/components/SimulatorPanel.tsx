@@ -11,7 +11,6 @@ import {
 } from "../../lib/data/grid-occupation";
 import { DEFENSES } from "../../lib/data/defenses";
 import { NEUTRAL_BUILDINGS } from "../../lib/data/neutral-buildings";
-import { DefenseIcon } from "./icons/DefenseIcon";
 import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
 import {
   createBestDeployment,
@@ -2133,7 +2132,7 @@ function BattleGrid({
           top:             d.y * cellPx + 1,
           width:           pxSize,
           height:          pxSize,
-          backgroundColor: DefenseIcon({ defenseId: d.defenseId, level: d.level, size: pxSize }) ? "transparent" : fill,
+          backgroundColor: fill,
           borderRadius:    3,
           cursor:          "grab",
           zIndex:          1,
@@ -2148,12 +2147,10 @@ function BattleGrid({
           overflow:        "hidden",
         }}
       >
-        {/* SVG illustration if available, fallback to level number */}
-        {DefenseIcon({ defenseId: d.defenseId, level: d.level, size: pxSize }) ?? (
-          <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 700, fontSize, lineHeight: 1, pointerEvents: "none", userSelect: "none" }}>
-            {d.level}
-          </span>
-        )}
+        {/* Level number */}
+        <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 700, fontSize, lineHeight: 1, pointerEvents: "none", userSelect: "none" }}>
+          {d.level}
+        </span>
         {/* Mode toggle button (X-Bow / Inferno) */}
         {isModeCapable(d.defenseId) && (
           <button
