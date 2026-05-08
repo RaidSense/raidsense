@@ -54,7 +54,7 @@ const DEBUG = true;
 const DISCRETE_DEFENSE_IDS = new Set<string>([
   "cannon", "archer-tower", "mortar", "air-defense",
   "wizard-tower", "x-bow", "eagle-artillery", "scattershot",
-  "hidden-tesla",
+  "hidden-tesla", "bomb-tower",
 ]);
 
 // Ground troops that are actually air units — affects which defenses can target them.
@@ -374,6 +374,10 @@ interface DefenseState {
   // ── Hidden Tesla ──────────────────────────────────────────────────────────
   isHidden:         boolean;   // true = not yet activated (invisible to troops)
   activationRadius: number;    // 0 = always active; 6 for hidden-tesla
+  // ── Bomb Tower death explosion ─────────────────────────────────────────────
+  deathExplosionDamage:    number;   // 0 = no explosion
+  deathExplosionRadius:    number;
+  deathExplosionTriggered: boolean;
 }
 
 interface WallState {
@@ -618,6 +622,9 @@ export function simulateAttack(
       multiTargetCount:   levelData.multiTargetCount ?? 0,
       isHidden:         (defData.activationRadius ?? 0) > 0,
       activationRadius: defData.activationRadius ?? 0,
+      deathExplosionDamage:    levelData.deathExplosionDamage ?? 0,
+      deathExplosionRadius:    defData.deathExplosionRadius   ?? 0,
+      deathExplosionTriggered: false,
     });
   }
 
@@ -1623,6 +1630,23 @@ export function simulateAttack(
           t.speedMultiplier  = Math.min(t.speedMultiplier,  zone.slowMultiplier);
           t.attackMultiplier = Math.min(t.attackMultiplier, zone.slowMultiplier);
         }
+      }
+    }
+
+    // --- Defense death explosions (e.g. Bomb Tower) --------------------------
+    for (const def of defenses.values()) {
+      if (def.alive || def.deathExplosionTriggered || def.deathExplosionDamage === 0) continue;
+      // Trigger only on the exact tick the defense died.
+      if (def.destroyedAt !== simTime) continue;
+      def.deathExplosionTriggered = true;
+      if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] EXPLOSION MORT ${def.defenseId}(${def.instanceId}) — ${def.deathExplosionDamage}HP r=${def.deathExplosionRadius}`);
+      for (const t of troops.values()) {
+        if (!t.alive || !t.isActive || t.isAirUnit) continue; // ground troops only
+        if (euclidean(t.position, def.position) > def.deathExplosionRadius) continue;
+        const actual = Math.min(def.deathExplosionDamage, t.hp);
+        t.hp -= actual;
+        if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
+        if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] EXPLOSION MORT → ${t.instanceId} dégâts=${actual.toFixed(0)}`);
       }
     }
 

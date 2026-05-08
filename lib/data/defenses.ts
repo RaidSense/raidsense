@@ -14,6 +14,8 @@ export interface DefenseLevel {
   dpsSingleMax?:  number; // 5.25 s+
   // ── Inferno Tower multi-target mode ─────────────────────────────────────
   multiTargetCount?: number; // simultaneous targets (default 5 or 6)
+  // ── Bomb Tower death explosion ────────────────────────────────────────────
+  deathExplosionDamage?: number; // ground-troop splash damage at destruction
 }
 
 export interface Defense {
@@ -40,6 +42,11 @@ export interface Defense {
    * Only used by Hidden Tesla. Undefined / 0 = always active (normal defenses).
    */
   activationRadius?: number;
+  /**
+   * Radius (tiles) of the death explosion on destruction.
+   * Only used by Bomb Tower. Affects ground troops only.
+   */
+  deathExplosionRadius?: number;
   levels: DefenseLevel[];
 }
 
@@ -258,6 +265,29 @@ export const DEFENSES: Defense[] = [
       { level: 3, hp: 4320, dps: 130, minRange: 3, maxRange: 10, townHallRequired: 14 },
       { level: 4, hp: 5180, dps: 156, minRange: 3, maxRange: 10, townHallRequired: 15 },
       { level: 5, hp: 6220, dps: 187, minRange: 3, maxRange: 10, townHallRequired: 16 },
+    ],
+  },
+  {
+    id: "bomb-tower",
+    name: "Tour à Bombes",
+    targetType: "Ground",
+    size: 3,
+    attackSpeed: 1.1,
+    splashRadius: 1.5,
+    splashType: "radius",
+    deathExplosionRadius: 2.75,
+    notes: "Splash au sol (rayon 1.5). Explose à la destruction : inflige deathExplosionDamage aux troupes au sol dans un rayon de 2.75 cases.",
+    levels: [
+      { level:  1, hp:  650, dps: 24, minRange: 0, maxRange: 6, townHallRequired:  8, deathExplosionDamage: 150 },
+      { level:  2, hp:  700, dps: 28, minRange: 0, maxRange: 6, townHallRequired:  8, deathExplosionDamage: 180 },
+      { level:  3, hp:  750, dps: 32, minRange: 0, maxRange: 6, townHallRequired:  9, deathExplosionDamage: 220 },
+      { level:  4, hp:  850, dps: 40, minRange: 0, maxRange: 6, townHallRequired: 10, deathExplosionDamage: 260 },
+      { level:  5, hp: 1050, dps: 48, minRange: 0, maxRange: 6, townHallRequired: 11, deathExplosionDamage: 300 },
+      { level:  6, hp: 1300, dps: 56, minRange: 0, maxRange: 6, townHallRequired: 11, deathExplosionDamage: 350 },
+      { level:  7, hp: 1600, dps: 64, minRange: 0, maxRange: 6, townHallRequired: 12, deathExplosionDamage: 400 },
+      { level:  8, hp: 1900, dps: 72, minRange: 0, maxRange: 6, townHallRequired: 13, deathExplosionDamage: 450 },
+      { level:  9, hp: 2300, dps: 84, minRange: 0, maxRange: 6, townHallRequired: 14, deathExplosionDamage: 500 },
+      { level: 10, hp: 2500, dps: 94, minRange: 0, maxRange: 6, townHallRequired: 15, deathExplosionDamage: 550 },
     ],
   },
   {

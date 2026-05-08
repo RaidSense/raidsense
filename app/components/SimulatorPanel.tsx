@@ -86,6 +86,7 @@ const DEFENSE_FILL: Record<string, string> = {
   "eagle-artillery": "#f59e0b",
   "scattershot":     "#ec4899",
   "hidden-tesla":    "#64748b",
+  "bomb-tower":      "#b45309",
 };
 
 const PALETTE_DEFAULTS: Record<string, number> = {
@@ -93,6 +94,7 @@ const PALETTE_DEFAULTS: Record<string, number> = {
   "wizard-tower": 8, "x-bow": 5, "inferno-tower": 4,
   "eagle-artillery": 3, "scattershot": 2,
   "hidden-tesla": 8,
+  "bomb-tower":   5,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
