@@ -403,6 +403,11 @@ interface DefenseState {
   triggerAt:         number;    // simTime of explosion (-1 = not triggered)
   consumed:          boolean;   // true after activation
   ejectCapacity:     number;    // spring-trap: max housing space ejectable (0 for other traps)
+  // ── Tornado trap ─────────────────────────────────────────────────────────
+  effectRadius:        number;  // continuous-effect zone (tornado); 0 for others
+  tornadoDuration:     number;  // seconds active after trigger
+  tornadoDps:          number;  // damage per second while active
+  tornadoActiveUntil:  number;  // simTime when effect ends (-1 = inactive, -2 = ended/logged)
 }
 
 interface WallState {
@@ -665,6 +670,10 @@ export function simulateAttack(
       triggerAt:     -1,
       consumed:      false,
       ejectCapacity: levelData.ejectCapacity ?? 0,
+      effectRadius:       defData.effectRadius     ?? 0,
+      tornadoDuration:    levelData.tornadoDuration ?? 0,
+      tornadoDps:         levelData.tornadoDps      ?? 0,
+      tornadoActiveUntil: -1,
       pulseInterval:  defData.pulseInterval ?? 0,
       pulseCooldown:  defData.pulseInterval ?? 0,   // first pulse at t = pulseInterval
       coneAngle:      (defData.coneAngle ?? 0) / 2 * (Math.PI / 180), // store half-cone in radians
@@ -1056,6 +1065,7 @@ export function simulateAttack(
       if (!def.isTriggered) {
         for (const t of troops.values()) {
           if (!t.alive || !t.isActive || t.isUnderground) continue;
+          if (t.troopId === "miner") continue;           // tornado (and other traps) ignore miners
           if (def.targetsGroundOnly && t.isAirUnit) continue;
           if (def.targetsAirOnly   && !t.isAirUnit) continue;
           const dist = euclidean(def.position, { x: t.position.x + 0.5, y: t.position.y + 0.5 });
@@ -1072,6 +1082,13 @@ export function simulateAttack(
               } else {
                 if (DEBUG) console.log(`[SPRING_IMMUNE t=${simTime.toFixed(1)}s] ${t.instanceId} housing=${t.housingSpace} > cap=${def.ejectCapacity}`);
               }
+            } else if (def.defenseId === "tornado-trap") {
+              // Tornado: activate immediately, continuous effect runs in separate loop
+              def.consumed           = true;
+              def.alive              = false;
+              def.destroyedAt        = simTime;
+              def.tornadoActiveUntil = simTime + def.tornadoDuration;
+              if (DEBUG) console.log(`[TORNADO_TRIGGER t=${simTime.toFixed(1)}s] ${def.instanceId} → ${t.instanceId} duration=${def.tornadoDuration}`);
             } else {
               def.isTriggered = true;
               def.triggerAt   = simTime + def.triggerDelay;
@@ -1112,6 +1129,41 @@ export function simulateAttack(
                           : "BOMB";
           console.log(`[${trapLabel}_EXPLODE t=${simTime.toFixed(1)}s] ${def.instanceId} dmg=${def.trapDamage} hits=${hits}`);
         }
+      }
+    }
+
+    // --- Tornado active phase: continuous damage + attraction ----------------
+    for (const def of defenses.values()) {
+      if (def.defenseId !== "tornado-trap") continue;
+      if (def.tornadoActiveUntil < 0) continue;
+
+      if (simTime > def.tornadoActiveUntil) {
+        if (DEBUG && def.tornadoActiveUntil >= 0) {
+          console.log(`[TORNADO_END t=${simTime.toFixed(1)}s] ${def.instanceId}`);
+        }
+        def.tornadoActiveUntil = -2;  // mark ended to suppress repeated logs
+        continue;
+      }
+
+      const tc: Vec2 = { x: def.position.x + def.size / 2, y: def.position.y + def.size / 2 };
+      for (const t of troops.values()) {
+        if (!t.alive || !t.isActive || t.isUnderground) continue;
+        if (t.troopId === "miner") continue;
+        const dist = euclidean(tc, { x: t.position.x + 0.5, y: t.position.y + 0.5 });
+        if (dist > def.effectRadius) continue;
+
+        // Damage
+        const dmg = Math.min(def.tornadoDps * TICK, t.hp);
+        t.hp -= dmg;
+        def.totalDamageDealt += dmg;
+        if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
+
+        // Attraction toward tornado center
+        const attractionFactor = 1 / Math.min(5, Math.max(1, Math.ceil(t.housingSpace / 3)));
+        const pullStep = 1.2 * attractionFactor * TICK;
+        t.position = stepToward(t.position, tc, pullStep);
+
+        if (DEBUG) console.log(`[TORNADO_TICK t=${simTime.toFixed(1)}s] ${def.instanceId} hit ${t.instanceId} dmg=${dmg.toFixed(1)} pull=${pullStep.toFixed(3)}`);
       }
     }
 

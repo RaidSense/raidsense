@@ -20,6 +20,9 @@ export interface DefenseLevel {
   trapDamage?: number;
   /** Per-level explosion radius (giant-bomb). Falls back to defData.explosionRadius. */
   explosionRadius?: number;
+  // ── Tornado trap ──────────────────────────────────────────────────────────
+  tornadoDuration?: number;  // seconds the tornado stays active
+  tornadoDps?: number;       // damage per second while active
   // ── Spring trap eject capacity ────────────────────────────────────────────
   /** Max housing space a troop can have to be ejected. */
   ejectCapacity?: number;
@@ -67,6 +70,8 @@ export interface Defense {
   targetsGroundOnly?: boolean;
   /** Only air troops trigger and get hit by this trap. */
   targetsAirOnly?: boolean;
+  /** Radius (tiles) of the continuous-effect zone (tornado-trap). */
+  effectRadius?: number;
   /**
    * Proximity radius (tiles) that triggers activation from hidden state.
    * Only used by Hidden Tesla. Undefined / 0 = always active (normal defenses).
@@ -517,6 +522,25 @@ export const DEFENSES: Defense[] = [
       { level: 11, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 16, trapDamage: 375 },
       { level: 12, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 17, trapDamage: 400 },
       { level: 13, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 18, trapDamage: 425 },
+    ],
+  },
+  {
+    id: "tornado-trap",
+    name: "Piège tornade",
+    targetType: "Ground & Air",
+    size: 1,
+    attackSpeed: 1,
+    category: "trap",
+    isTrap: true,
+    singleUse: true,
+    hidden: true,
+    triggerRadius: 3,
+    effectRadius: 3,
+    notes: "Piège à usage unique. Déclenché par toute troupe (sauf Miner) dans rayon 3. Attire et inflige des dégâts continus pendant la durée active.",
+    levels: [
+      { level: 1, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 11, tornadoDuration: 5, tornadoDps:  8 },
+      { level: 2, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 11, tornadoDuration: 6, tornadoDps:  8 },
+      { level: 3, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 12, tornadoDuration: 7, tornadoDps:  8 },
     ],
   },
 ];

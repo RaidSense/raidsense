@@ -94,6 +94,7 @@ const DEFENSE_FILL: Record<string, string> = {
   "spring-trap":     "#22c55e",
   "giant-bomb":      "#b91c1c",
   "air-bomb":        "#06b6d4",
+  "tornado-trap":    "#a855f7",
 };
 
 const PALETTE_DEFAULTS: Record<string, number> = {
@@ -109,6 +110,7 @@ const PALETTE_DEFAULTS: Record<string, number> = {
   "spring-trap":  6,
   "giant-bomb":   9,
   "air-bomb":     8,
+  "tornado-trap": 3,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -2539,6 +2541,39 @@ function BattleGrid({
               <circle cx={cx} cy={cy} r={triggerR}
                 fill="rgba(251,146,60,0.12)" stroke="#f97316" strokeWidth={1}
                 strokeOpacity={0.85} />
+            </g>
+          );
+        })()}
+        {/* Tornado-trap ranges — trigger radius + effect radius */}
+        {(() => {
+          const activeId = hoveredDefenseId ?? selectedId;
+          if (!activeId) return null;
+          const d = placed.find((p) => p.instanceId === activeId && p.defenseId === "tornado-trap");
+          if (!d) return null;
+          const defData   = DEFENSES.find((def) => def.id === "tornado-trap");
+          if (!defData) return null;
+          const levelData = defData.levels.find((l) => l.level === d.level);
+          const size      = defData.size ?? 1;
+          const cx        = (d.x + size / 2) * cellPx;
+          const cy        = (d.y + size / 2) * cellPx;
+          const triggerR  = (defData.triggerRadius ?? 3) * cellPx;
+          const effectR   = ((defData as any).effectRadius ?? 3) * cellPx;
+          const dur       = (levelData as any)?.tornadoDuration ?? 5;
+          const dps       = (levelData as any)?.tornadoDps ?? 8;
+          return (
+            <g>
+              {/* Effect radius */}
+              <circle cx={cx} cy={cy} r={effectR}
+                fill="rgba(168,85,247,0.12)" stroke="#a855f7" strokeWidth={1.5}
+                strokeOpacity={0.8} strokeDasharray="5 3" />
+              {/* Trigger radius */}
+              <circle cx={cx} cy={cy} r={triggerR}
+                fill="rgba(192,132,252,0.08)" stroke="#c084fc" strokeWidth={1}
+                strokeOpacity={0.7} />
+              <text x={cx} y={cy - effectR - 6} textAnchor="middle"
+                fontSize={10} fill="#a855f7" opacity={0.9}>
+                {`${dur}s · ${dps} DPS`}
+              </text>
             </g>
           );
         })()}
