@@ -1159,21 +1159,30 @@ export default function SimulatorPanel() {
     clearResult();
   }
 
+  const AIR_SWEEPER_ANGLES = ["0", "45", "90", "135", "180", "225", "270", "315"] as const;
+
   function handleModeToggle(instanceId: string) {
     setPlaced((prev) => prev.map((d) => {
       if (d.instanceId !== instanceId) return d;
-      if (d.defenseId === "inferno-tower") {
-        return { ...d, mode: d.mode === "single" ? "multi" : "single" };
-      }
-      if (d.defenseId === "x-bow") {
-        return { ...d, mode: d.mode === "both" ? "ground" : "both" };
-      }
+      if (d.defenseId === "inferno-tower") return { ...d, mode: d.mode === "single" ? "multi" : "single" };
+      if (d.defenseId === "x-bow")         return { ...d, mode: d.mode === "both" ? "ground" : "both" };
       if (d.defenseId === "air-sweeper") {
-        const angles = ["0", "90", "180", "270"];
-        const curr   = angles.indexOf(d.mode ?? "0");
-        return { ...d, mode: angles[(curr + 1) % angles.length] };
+        const curr = AIR_SWEEPER_ANGLES.indexOf(d.mode as typeof AIR_SWEEPER_ANGLES[number] ?? "0");
+        return { ...d, mode: AIR_SWEEPER_ANGLES[(curr + 1) % AIR_SWEEPER_ANGLES.length] };
       }
       return d;
+    }));
+    clearResult();
+  }
+
+  function handleToggleOrientation(instanceId: string, reverse: boolean) {
+    setPlaced((prev) => prev.map((d) => {
+      if (d.instanceId !== instanceId || d.defenseId !== "air-sweeper") return d;
+      const curr = AIR_SWEEPER_ANGLES.indexOf(d.mode as typeof AIR_SWEEPER_ANGLES[number] ?? "0");
+      const next = reverse
+        ? AIR_SWEEPER_ANGLES[(curr - 1 + AIR_SWEEPER_ANGLES.length) % AIR_SWEEPER_ANGLES.length]
+        : AIR_SWEEPER_ANGLES[(curr + 1) % AIR_SWEEPER_ANGLES.length];
+      return { ...d, mode: next };
     }));
     clearResult();
   }
@@ -1414,6 +1423,7 @@ export default function SimulatorPanel() {
             onDragEnd={() => setDragItemSize(1)}
             occupationMap={occupation}
             onDragEntityStart={(sz) => setDragItemSize(sz)}
+            onToggleOrientation={handleToggleOrientation}
             wallMode={wallMode}
             wallLevel={wallLevel}
             placedWalls={placedWalls}
@@ -1443,6 +1453,21 @@ export default function SimulatorPanel() {
               <div className="rounded-xl border border-purple-500/40 bg-purple-950/20 px-3 py-2 text-xs flex items-center gap-3 flex-wrap">
                 <span className="text-purple-300 font-semibold">✦ {name}</span>
                 <span className="text-slate-400">{pos} · {size}×{size}</span>
+                {def?.defenseId === "air-sweeper" && (
+                  <>
+                    <span className="text-sky-300 font-mono">{def.mode ?? "0"}°</span>
+                    <button
+                      onClick={() => handleToggleOrientation(def.instanceId, false)}
+                      title="Tourner dans le sens horaire"
+                      className="text-sky-400 hover:text-sky-200 px-1.5 py-0.5 rounded border border-sky-800/50 hover:border-sky-500/60 text-xs"
+                    >↻</button>
+                    <button
+                      onClick={() => handleToggleOrientation(def.instanceId, true)}
+                      title="Tourner dans le sens anti-horaire"
+                      className="text-sky-400 hover:text-sky-200 px-1.5 py-0.5 rounded border border-sky-800/50 hover:border-sky-500/60 text-xs"
+                    >↺</button>
+                  </>
+                )}
                 <span className="text-slate-500">Lv</span>
                 <select
                   value={curLv}
@@ -1933,6 +1958,7 @@ function BattleGrid({
   hpOnDamageOnly,
   occupationMap,
   onDragEntityStart,
+  onToggleOrientation,
 }: {
   placed: PlacedDefense[];
   onPlace: (x: number, y: number, defenseId: string, level: number) => void;
@@ -1974,6 +2000,7 @@ function BattleGrid({
   onDragEnd?: () => void;
   occupationMap?: OccupationMap;
   onDragEntityStart?: (size: number) => void;
+  onToggleOrientation?: (instanceId: string, reverse: boolean) => void;
   wallMode?: boolean;
   wallLevel?: number;
   placedWalls?: WallPlacement[];
@@ -2172,7 +2199,10 @@ function BattleGrid({
     if (d.defenseId === "inferno-tower") return d.mode === "single" ? "S" : "M";
     if (d.defenseId === "x-bow")         return d.mode === "both"   ? "A" : "G";
     if (d.defenseId === "air-sweeper") {
-      const labels: Record<string, string> = { "0": "→", "90": "↓", "180": "←", "270": "↑" };
+      const labels: Record<string, string> = {
+        "0": "→", "45": "↘", "90": "↓", "135": "↙",
+        "180": "←", "225": "↖", "270": "↑", "315": "↗",
+      };
       return labels[d.mode ?? "0"] ?? "→";
     }
     return "";
@@ -2192,9 +2222,21 @@ function BattleGrid({
       <div
         key={d.instanceId}
         draggable
-        title={`${name} Lv${d.level} (${d.x},${d.y}) — clic: sélectionner · clic-droit: supprimer · glisser: déplacer`}
+        title={
+          d.defenseId === "air-sweeper"
+            ? `Souffleur d'Air Lv${d.level} (${d.x},${d.y}) — Orientation : ${d.mode ?? "0"}° — clic : tourner · Shift+clic : tourner ← · clic-droit : supprimer`
+            : `${name} Lv${d.level} (${d.x},${d.y}) — clic: sélectionner · clic-droit: supprimer · glisser: déplacer`
+        }
         onDragStart={(e) => defDragStart(e, d, size)}
-        onClick={(e) => { e.stopPropagation(); onSelectElement?.(d.instanceId, "defense"); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (d.defenseId === "air-sweeper") {
+            onToggleOrientation?.(d.instanceId, e.shiftKey);
+            onSelectElement?.(d.instanceId, "defense");
+          } else {
+            onSelectElement?.(d.instanceId, "defense");
+          }
+        }}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onRemove(d.instanceId); if (selectedId === d.instanceId) { onSelectElement?.(null as unknown as string, null as unknown as "defense"); } }}
         style={{
           position:        "absolute",
@@ -2398,11 +2440,11 @@ function BattleGrid({
             </>
           );
         })()}
-        {/* Range circle for hovered defense */}
+        {/* Range circle for hovered defense (not air-sweeper — handled separately) */}
         {(() => {
           if (!hoveredDefenseId) return null;
           const d         = placed.find((p) => p.instanceId === hoveredDefenseId);
-          if (!d) return null;
+          if (!d || d.defenseId === "air-sweeper") return null;
           const defData   = DEFENSES.find((def) => def.id === d.defenseId);
           if (!defData) return null;
           const levelData = defData.levels.find((l) => l.level === d.level);
@@ -2410,7 +2452,6 @@ function BattleGrid({
           const size      = defData.size ?? 1;
           const cx        = (d.x + size / 2) * cellPx;
           const cy        = (d.y + size / 2) * cellPx;
-          // Effective range depends on mode
           const effectiveMax =
             d.defenseId === "x-bow"          && d.mode === "both"   ? 11.5 :
             d.defenseId === "inferno-tower"  && d.mode !== "single" ? 10   :
@@ -2418,23 +2459,67 @@ function BattleGrid({
           const maxR      = effectiveMax * cellPx;
           const minR      = levelData.minRange * cellPx;
           const color     = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
-          // Two-arc SVG circle path (works as compound path for evenodd donut)
           const arc = (r: number) =>
             `M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${2 * r} 0 a ${r} ${r} 0 1 0 ${-2 * r} 0`;
           return (
             <g>
-              {/* Filled zone — donut if minRange > 0, full disk otherwise */}
               <path
                 d={minR > 0 ? `${arc(maxR)} ${arc(minR)}` : arc(maxR)}
-                fillRule="evenodd"
-                fill={`${color}30`}
+                fillRule="evenodd" fill={`${color}30`}
               />
-              {/* Outer ring */}
               <circle cx={cx} cy={cy} r={maxR} fill="none" stroke={color} strokeWidth={1.5} strokeOpacity={0.65} />
-              {/* Dead-zone ring (minRange) */}
               {minR > 0 && (
                 <circle cx={cx} cy={cy} r={minR} fill="none" stroke={color} strokeWidth={1} strokeOpacity={0.55} strokeDasharray="5 3" />
               )}
+            </g>
+          );
+        })()}
+        {/* Air Sweeper cone — hover OR selection */}
+        {(() => {
+          const activeId = hoveredDefenseId ?? selectedId;
+          if (!activeId) return null;
+          const d = placed.find((p) => p.instanceId === activeId && p.defenseId === "air-sweeper");
+          if (!d) return null;
+          const defData   = DEFENSES.find((def) => def.id === "air-sweeper");
+          const levelData = defData?.levels.find((l) => l.level === d.level);
+          const size = defData?.size ?? 2;
+          const cx   = (d.x + size / 2) * cellPx;
+          const cy   = (d.y + size / 2) * cellPx;
+          const R    = (levelData?.maxRange ?? 15) * cellPx;
+          const orientRad  = parseFloat(d.mode ?? "0") * (Math.PI / 180);
+          const halfCone   = 60 * (Math.PI / 180); // 120° / 2
+          const startAngle = orientRad - halfCone;
+          const endAngle   = orientRad + halfCone;
+          const sx = cx + R * Math.cos(startAngle);
+          const sy = cy + R * Math.sin(startAngle);
+          const ex = cx + R * Math.cos(endAngle);
+          const ey = cy + R * Math.sin(endAngle);
+          const color = "#0ea5e9";
+          const arrowLen = R * 0.45;
+          return (
+            <g>
+              {/* Faint range circle */}
+              <circle cx={cx} cy={cy} r={R}
+                fill="none" stroke={color} strokeWidth={0.6} strokeOpacity={0.2} strokeDasharray="4 5" />
+              {/* Cone fill */}
+              <path
+                d={`M ${cx} ${cy} L ${sx} ${sy} A ${R} ${R} 0 0 1 ${ex} ${ey} Z`}
+                fill={`${color}22`} stroke={color} strokeWidth={1.5} strokeOpacity={0.75}
+                strokeLinejoin="round"
+              />
+              {/* Direction arrow */}
+              <line
+                x1={cx} y1={cy}
+                x2={cx + arrowLen * Math.cos(orientRad)}
+                y2={cy + arrowLen * Math.sin(orientRad)}
+                stroke={color} strokeWidth={2} strokeOpacity={0.9} strokeLinecap="round"
+              />
+              {/* Arrowhead */}
+              <circle
+                cx={cx + arrowLen * Math.cos(orientRad)}
+                cy={cy + arrowLen * Math.sin(orientRad)}
+                r={3} fill={color} opacity={0.9}
+              />
             </g>
           );
         })()}
