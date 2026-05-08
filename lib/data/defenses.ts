@@ -19,12 +19,10 @@ export interface DefenseLevel {
   // ── Air Sweeper pulse ─────────────────────────────────────────────────────
   pushStrength?: number;         // tiles pushed per pulse (air-sweeper only)
   // ── Monolith HP% bonus ────────────────────────────────────────────────────
-  /**
-   * Bonus damage as a fraction of the target's MAX HP.
-   * Applied per shot in addition to base dps damage.
-   * Only used by Monolith.
-   */
   hpPercentBonus?: number;
+  // ── Builder Hut passive repair ────────────────────────────────────────────
+  /** HP healed per second to the nearest damaged building within 6 tiles. */
+  repairPerSecond?: number;
 }
 
 export interface Defense {
@@ -278,6 +276,23 @@ export const DEFENSES: Defense[] = [
       { level: 3, hp: 4320, dps: 130, minRange: 3, maxRange: 10, townHallRequired: 14 },
       { level: 4, hp: 5180, dps: 156, minRange: 3, maxRange: 10, townHallRequired: 15 },
       { level: 5, hp: 6220, dps: 187, minRange: 3, maxRange: 10, townHallRequired: 16 },
+    ],
+  },
+  {
+    id: "builder-hut",
+    name: "Cabane d'Ouvrier",
+    targetType: "Ground & Air",
+    size: 3,
+    attackSpeed: 0.4,
+    notes: "Défense et réparation passive. Lv1 ne tire pas (dps=0). Lv2+ attaque et répare le bâtiment allié le plus proche endommagé (dans rayon 6). TODO: ouvrier mobile, bunker, sorts.",
+    levels: [
+      { level: 1, hp:  250, dps:   0, minRange: 0, maxRange: 7, townHallRequired: 14, repairPerSecond:  0 },
+      { level: 2, hp: 1000, dps:  80, minRange: 0, maxRange: 7, townHallRequired: 14, repairPerSecond: 50 },
+      { level: 3, hp: 1300, dps: 100, minRange: 0, maxRange: 7, townHallRequired: 14, repairPerSecond: 60 },
+      { level: 4, hp: 1600, dps: 120, minRange: 0, maxRange: 7, townHallRequired: 14, repairPerSecond: 70 },
+      { level: 5, hp: 1800, dps: 135, minRange: 0, maxRange: 7, townHallRequired: 15, repairPerSecond: 80 },
+      { level: 6, hp: 1900, dps: 150, minRange: 0, maxRange: 7, townHallRequired: 16, repairPerSecond: 85 },
+      { level: 7, hp: 2000, dps: 165, minRange: 0, maxRange: 7, townHallRequired: 17, repairPerSecond: 90 },
     ],
   },
   {

@@ -54,7 +54,7 @@ const DEBUG = true;
 const DISCRETE_DEFENSE_IDS = new Set<string>([
   "cannon", "archer-tower", "mortar", "air-defense",
   "wizard-tower", "x-bow", "eagle-artillery", "scattershot",
-  "hidden-tesla", "bomb-tower", "monolith",
+  "hidden-tesla", "bomb-tower", "monolith", "builder-hut",
 ]);
 
 // Ground troops that are actually air units — affects which defenses can target them.
@@ -374,8 +374,12 @@ interface DefenseState {
   // ── Hidden Tesla ──────────────────────────────────────────────────────────
   isHidden:         boolean;   // true = not yet activated (invisible to troops)
   activationRadius: number;    // 0 = always active; 6 for hidden-tesla
+  // ── HP max (used by builder hut repair + monolith bonus) ─────────────────
+  maxHp:          number;
   // ── Monolith HP% bonus ────────────────────────────────────────────────────
   hpPercentBonus: number;   // 0 for all other defenses; >0 for monolith
+  // ── Builder Hut passive repair ────────────────────────────────────────────
+  repairPerSecond: number;  // 0 for all other defenses
   // ── Air Sweeper ───────────────────────────────────────────────────────────
   pulseInterval:  number;   // 0 = standard attack; 5 for air-sweeper
   pulseCooldown:  number;   // seconds until next pulse fires
@@ -633,7 +637,9 @@ export function simulateAttack(
       deathExplosionDamage:    levelData.deathExplosionDamage ?? 0,
       deathExplosionRadius:    defData.deathExplosionRadius   ?? 0,
       deathExplosionTriggered: false,
-      hpPercentBonus: levelData.hpPercentBonus ?? 0,
+      maxHp:          levelData.hp,
+      hpPercentBonus: levelData.hpPercentBonus  ?? 0,
+      repairPerSecond: levelData.repairPerSecond ?? 0,
       pulseInterval:  defData.pulseInterval ?? 0,
       pulseCooldown:  defData.pulseInterval ?? 0,   // first pulse at t = pulseInterval
       coneAngle:      (defData.coneAngle ?? 0) / 2 * (Math.PI / 180), // store half-cone in radians
@@ -1181,6 +1187,7 @@ export function simulateAttack(
           ` base=${baseDmg.toFixed(0)} bonus=${bonusDmg.toFixed(0)} total=${stdDamage.toFixed(0)}`
         );
       }
+      if (stdDamage <= 0) { def.attackCooldown = def.attackSpeed; continue; } // e.g. builder-hut lv1
       if (def.splashType === "scattershot") {
         const coneHits = applyScattershotConeSplash(def, target, stdDamage, simTime);
         fireShot(def, target, stdDamage, simTime, coneHits.map((h) => h.id), coneHits);
@@ -1702,6 +1709,44 @@ export function simulateAttack(
         t.hp -= actual;
         if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
         if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] EXPLOSION MORT → ${t.instanceId} dégâts=${actual.toFixed(0)}`);
+      }
+    }
+
+    // --- Builder Hut passive repair (once per second) ------------------------
+    if (tick % TICKS_PER_SECOND === 0) {
+      for (const bh of defenses.values()) {
+        if (!bh.alive || bh.repairPerSecond === 0) continue;
+        let bestId: string | null = null;
+        let bestDist = Infinity;
+        const REPAIR_RADIUS = 6;
+        // Nearest damaged defense (excluding self)
+        for (const [id, d] of defenses) {
+          if (!d.alive || id === bh.instanceId || d.hp >= d.maxHp) continue;
+          const dist = euclidean(bh.position, d.position);
+          if (dist <= REPAIR_RADIUS && dist < bestDist) { bestDist = dist; bestId = id; }
+        }
+        // Nearest damaged neutral building
+        for (const [id, b] of buildings) {
+          if (!b.alive || b.hp >= b.maxHp) continue;
+          const dist = euclidean(bh.position, b.position);
+          if (dist <= REPAIR_RADIUS && dist < bestDist) { bestDist = dist; bestId = id; }
+        }
+        if (bestId === null) continue;
+        const dTarget = defenses.get(bestId);
+        const bTarget = buildings.get(bestId);
+        if (dTarget) {
+          const healed = Math.min(bh.repairPerSecond, dTarget.maxHp - dTarget.hp);
+          if (healed > 0) {
+            dTarget.hp += healed;
+            if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] BUILDER_HUT ${bh.instanceId} repaired ${bestId} +${healed.toFixed(0)}hp`);
+          }
+        } else if (bTarget) {
+          const healed = Math.min(bh.repairPerSecond, bTarget.maxHp - bTarget.hp);
+          if (healed > 0) {
+            bTarget.hp += healed;
+            if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] BUILDER_HUT ${bh.instanceId} repaired ${bestId} +${healed.toFixed(0)}hp`);
+          }
+        }
       }
     }
 

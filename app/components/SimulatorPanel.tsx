@@ -89,6 +89,7 @@ const DEFENSE_FILL: Record<string, string> = {
   "bomb-tower":      "#b45309",
   "air-sweeper":     "#0ea5e9",
   "monolith":        "#4c1d95",
+  "builder-hut":     "#d97706",
 };
 
 const PALETTE_DEFAULTS: Record<string, number> = {
@@ -99,6 +100,7 @@ const PALETTE_DEFAULTS: Record<string, number> = {
   "bomb-tower":   5,
   "air-sweeper":  4,
   "monolith":     1,
+  "builder-hut":  4,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────

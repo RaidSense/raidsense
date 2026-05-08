@@ -18,6 +18,7 @@ export interface THDefenseLimits {
   "bomb-tower"?:       number;
   "air-sweeper"?:      number;
   "monolith"?:         number;
+  "builder-hut"?:      number;
 }
 
 export const TH_DEFENSE_LIMITS: Record<number, THDefenseLimits> = {
@@ -34,8 +35,8 @@ export const TH_DEFENSE_LIMITS: Record<number, THDefenseLimits> = {
   11: { cannon: 9,  "archer-tower": 9,  mortar: 4,  "air-defense": 4,  "wizard-tower": 5,  "x-bow": 3,  "inferno-tower": 2,  "eagle-artillery": 1,  "hidden-tesla": 4,  "bomb-tower": 2,  "air-sweeper": 2 },
   12: { cannon: 9,  "archer-tower": 9,  mortar: 4,  "air-defense": 4,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  "hidden-tesla": 5,  "bomb-tower": 3,  "air-sweeper": 2 },
   13: { cannon: 10, "archer-tower": 9,  mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 1,  "hidden-tesla": 5,  "bomb-tower": 3,  "air-sweeper": 2 },
-  14: { cannon: 11, "archer-tower": 10, mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 2,  "hidden-tesla": 5,  "bomb-tower": 4,  "air-sweeper": 2 },
-  15: { cannon: 11, "archer-tower": 11, mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 2,  "hidden-tesla": 5,  "bomb-tower": 4,  "air-sweeper": 2,  "monolith": 1 },
+  14: { cannon: 11, "archer-tower": 10, mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 2,  "hidden-tesla": 5,  "bomb-tower": 4,  "air-sweeper": 2,  "builder-hut": 5 },
+  15: { cannon: 11, "archer-tower": 11, mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 2,  "hidden-tesla": 5,  "bomb-tower": 4,  "air-sweeper": 2,  "monolith": 1,  "builder-hut": 5 },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
