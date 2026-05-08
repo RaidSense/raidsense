@@ -15,6 +15,7 @@ import {
 import { DEFENSES } from "../../lib/data/defenses";
 import { NEUTRAL_BUILDINGS } from "../../lib/data/neutral-buildings";
 import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
+import type { SimEvent } from "../../lib/engine/events";
 import {
   createBestDeployment,
   scoreSimResult,
@@ -3784,7 +3785,126 @@ function ResultsSection({
           </div>
         </div>
       )}
+
+      {/* ── Events Timeline ─────────────────────────────────────────────────── */}
+      {result.events && result.events.length > 0 && (
+        <EventsTimeline events={result.events} />
+      )}
     </section>
+  );
+}
+
+// ── EventsTimeline ────────────────────────────────────────────────────────────
+
+type EventFilter = "ALL" | "DAMAGE" | "TRAPS" | "REPAIR" | "DESTROY" | "DEBUG";
+
+const FILTER_TYPES: Record<EventFilter, string[]> = {
+  ALL:     [],
+  DAMAGE:  ["DEFENSE_FIRE", "TRAP_HIT", "SEEKING_AIR_MINE_HIT", "DEATH_EXPLOSION", "CHAIN_LIGHTNING"],
+  TRAPS:   ["TRAP_TRIGGER", "TRAP_HIT", "SPRING_EJECT", "SPRING_IMMUNE", "TORNADO_TRIGGER", "TORNADO_TICK", "TORNADO_END", "SEEKING_AIR_MINE_HIT"],
+  REPAIR:  ["REPAIR"],
+  DESTROY: ["TROOP_DEATH", "DEFENSE_DESTROYED", "BUILDING_DESTROYED", "WALL_DESTROYED"],
+  DEBUG:   ["TESLA_ACTIVATED", "AIR_SWEEP", "TORNADO_TICK", "TROOP_FIRE"],
+};
+
+const EVENT_META: Record<string, { icon: string; color: string; label: string }> = {
+  DEFENSE_FIRE:          { icon: "⚡", color: "#facc15", label: "Tir défense" },
+  TESLA_ACTIVATED:       { icon: "⚡", color: "#67e8f9", label: "Tesla activée" },
+  AIR_SWEEP:             { icon: "💨", color: "#38bdf8", label: "Souffle air" },
+  DEATH_EXPLOSION:       { icon: "💥", color: "#f97316", label: "Explosion mort" },
+  TRAP_TRIGGER:          { icon: "⚠️", color: "#fb923c", label: "Piège déclenché" },
+  TRAP_HIT:              { icon: "💣", color: "#ef4444", label: "Piège touche" },
+  SPRING_EJECT:          { icon: "🌀", color: "#4ade80", label: "Ressort éjecte" },
+  SPRING_IMMUNE:         { icon: "🛡️", color: "#94a3b8", label: "Ressort immunisé" },
+  TORNADO_TRIGGER:       { icon: "🌪️", color: "#c084fc", label: "Tornade active" },
+  TORNADO_TICK:          { icon: "🌀", color: "#a855f7", label: "Tornade tick" },
+  TORNADO_END:           { icon: "✓",  color: "#6b7280", label: "Tornade finie" },
+  SEEKING_AIR_MINE_HIT:  { icon: "🎯", color: "#f472b6", label: "Mine chercheuse" },
+  TROOP_FIRE:            { icon: "🔥", color: "#fdba74", label: "Tir troupe" },
+  TROOP_DEATH:           { icon: "💀", color: "#f87171", label: "Troupe tuée" },
+  DEFENSE_DESTROYED:     { icon: "🏚️", color: "#ef4444", label: "Défense détruite" },
+  BUILDING_DESTROYED:    { icon: "🏛️", color: "#f97316", label: "Bâtiment détruit" },
+  WALL_DESTROYED:        { icon: "🧱", color: "#d97706", label: "Mur détruit" },
+  REPAIR:                { icon: "🔧", color: "#34d399", label: "Réparation" },
+  CHAIN_LIGHTNING:       { icon: "⚡", color: "#818cf8", label: "Foudre chaîne" },
+};
+
+function EventsTimeline({ events }: { events: SimEvent[] }) {
+  const [open,   setOpen]   = useState(false);
+  const [filter, setFilter] = useState<EventFilter>("ALL");
+
+  const filtered = useMemo(() => {
+    const allowed = FILTER_TYPES[filter];
+    if (allowed.length === 0) return events;
+    return events.filter((e) => allowed.includes(e.type));
+  }, [events, filter]);
+
+  const FILTERS: EventFilter[] = ["ALL", "DAMAGE", "TRAPS", "REPAIR", "DESTROY", "DEBUG"];
+  const filterLabels: Record<EventFilter, string> = {
+    ALL: `Tout (${events.length})`, DAMAGE: "Dégâts", TRAPS: "Pièges",
+    REPAIR: "Soin", DESTROY: "Destructions", DEBUG: "Debug",
+  };
+
+  return (
+    <div className="space-y-2">
+      {/* Header toggle */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between rounded-xl bg-[#0d1020] px-4 py-2.5 text-sm text-slate-200 hover:bg-[#131929] transition-colors"
+      >
+        <span className="font-semibold">📋 Events Timeline</span>
+        <span className="text-xs text-slate-500">{events.length} événements {open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div className="rounded-xl border border-[#1e2a45] bg-[#070b14] overflow-hidden">
+          {/* Filter row */}
+          <div className="flex gap-1 p-2 border-b border-[#1e2a45] flex-wrap">
+            {FILTERS.map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  filter === f
+                    ? "bg-indigo-600 text-white"
+                    : "bg-[#0d1020] text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {filterLabels[f]}
+              </button>
+            ))}
+          </div>
+
+          {/* Event list */}
+          <div className="max-h-72 overflow-y-auto font-mono text-xs p-2 space-y-0.5">
+            {filtered.length === 0 && (
+              <p className="text-center text-slate-600 py-4">Aucun événement dans ce filtre</p>
+            )}
+            {filtered.map((ev, i) => {
+              const meta  = EVENT_META[ev.type] ?? { icon: "•", color: "#94a3b8", label: ev.type };
+              const parts: string[] = [];
+              if (ev.sourceId) parts.push(ev.sourceId);
+              if (ev.targetId) parts.push(`→ ${ev.targetId}`);
+              if (ev.value !== undefined) parts.push(`(${ev.value > 0 && ev.value < 1 ? ev.value.toFixed(2) : Math.round(ev.value)})`);
+              return (
+                <div key={i} className="flex items-baseline gap-2 px-1.5 py-0.5 rounded hover:bg-white/[0.03]">
+                  <span className="text-slate-600 flex-shrink-0 w-12 text-right">
+                    {ev.time.toFixed(1)}s
+                  </span>
+                  <span className="flex-shrink-0 w-5 text-center">{meta.icon}</span>
+                  <span className="flex-shrink-0" style={{ color: meta.color }}>{meta.label}</span>
+                  <span className="text-slate-500 truncate">{parts.join(" ")}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="border-t border-[#1e2a45] px-3 py-1.5 text-xs text-slate-600">
+            {filtered.length} / {events.length} événements affichés
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -4,6 +4,7 @@ import { getNeutralBuildingById } from "../data/neutral-buildings";
 import { type WallPlacement, WALL_HP } from "../data/walls";
 import { dijkstraPath, adjacentTilesForFootprint, type PathResult } from "./pathfinding";
 import { TOWN_HALL_DATA } from "../data/town-halls";
+import { type SimEvent } from "./events";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -285,6 +286,8 @@ export interface SimulationResult {
   deathLightningEvents: DeathLightningEvent[];
   troopFireEvents: TroopFireEvent[];
   targetChanges: TargetChangeEvent[];
+  /** Unified timeline of all significant simulation events. */
+  events: SimEvent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -885,6 +888,11 @@ export function simulateAttack(
   const deathLightningEvents: DeathLightningEvent[] = [];
   const troopFireEvents:      TroopFireEvent[]      = [];
   const targetChanges:        TargetChangeEvent[]   = [];
+  const simEvents:            SimEvent[]            = [];
+
+  function pushEvent(ev: SimEvent): void {
+    simEvents.push(ev);
+  }
 
   function fireShot(
     def:       DefenseState,
@@ -901,6 +909,8 @@ export function simulateAttack(
       target.hp          = 0;
       target.alive       = false;
       target.destroyedAt = simTime;
+      pushEvent({ time: simTime, type: "TROOP_DEATH", targetId: target.instanceId, sourceId: def.instanceId,
+        extra: { troopId: target.troopId } });
     }
     const impactPos: Vec2 = { x: target.position.x + 0.5, y: target.position.y + 0.5 };
     shots.push({
@@ -921,6 +931,8 @@ export function simulateAttack(
         })),
       } : {}),
     });
+    pushEvent({ time: simTime, type: "DEFENSE_FIRE", sourceId: def.instanceId, targetId: target.instanceId, value: actual,
+      extra: { defenseId: def.defenseId, splashCount: extraHits.length } });
     if (DEBUG) {
       const splashInfo = extraHits.length ? ` [splash×${extraHits.length}: ${extraHits.join(",")}]` : "";
       console.log(`[DEBUG t=${simTime.toFixed(2)}s] TIR ${def.defenseId}(${def.instanceId}) → ${target.instanceId} | dégâts=${actual.toFixed(0)}${splashInfo}`);
@@ -1051,6 +1063,7 @@ export function simulateAttack(
           def.isHidden = false;
           // Reset cooldown so Tesla fires after a normal initial delay
           def.attackCooldown = def.attackSpeed;
+          pushEvent({ time: simTime, type: "TESLA_ACTIVATED", sourceId: def.instanceId, targetId: t.instanceId });
           if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] TESLA ACTIVÉE ${def.instanceId} (déclenchée par ${t.instanceId})`);
           break;
         }
@@ -1082,7 +1095,9 @@ export function simulateAttack(
             const actual = Math.min(def.trapDamage, bestTroop.hp);
             bestTroop.hp -= actual;
             def.totalDamageDealt += actual;
-            if (bestTroop.hp <= 0 && bestTroop.alive) { bestTroop.hp = 0; bestTroop.alive = false; bestTroop.destroyedAt = simTime; }
+            if (bestTroop.hp <= 0 && bestTroop.alive) { bestTroop.hp = 0; bestTroop.alive = false; bestTroop.destroyedAt = simTime;
+              pushEvent({ time: simTime, type: "TROOP_DEATH", targetId: bestTroop.instanceId, extra: { troopId: bestTroop.troopId, cause: def.instanceId } }); }
+            pushEvent({ time: simTime, type: "SEEKING_AIR_MINE_HIT", sourceId: def.instanceId, targetId: bestTroop.instanceId, value: actual });
             if (DEBUG) console.log(`[SEEKING_AIR_MINE_HIT t=${simTime.toFixed(1)}s] ${def.instanceId} dmg=${actual.toFixed(0)} target=${bestTroop.instanceId} remaining=${bestTroop.hp.toFixed(0)}`);
           }
         } else {
@@ -1098,11 +1113,15 @@ export function simulateAttack(
               def.consumed    = true;
               def.alive       = false;
               def.destroyedAt = simTime;
+              pushEvent({ time: simTime, type: "TRAP_TRIGGER", sourceId: def.instanceId, targetId: t.instanceId, extra: { trapType: "spring-trap" } });
               if (DEBUG) console.log(`[SPRING_TRIGGER t=${simTime.toFixed(1)}s] ${def.instanceId} → ${t.instanceId} housing=${t.housingSpace} cap=${def.ejectCapacity}`);
               if (t.housingSpace <= def.ejectCapacity) {
                 t.hp = 0; t.alive = false; t.destroyedAt = simTime;
+                pushEvent({ time: simTime, type: "SPRING_EJECT", sourceId: def.instanceId, targetId: t.instanceId });
+                pushEvent({ time: simTime, type: "TROOP_DEATH", targetId: t.instanceId, extra: { troopId: t.troopId, cause: def.instanceId } });
                 if (DEBUG) console.log(`[SPRING_EJECT t=${simTime.toFixed(1)}s] ${t.instanceId} removed`);
               } else {
+                pushEvent({ time: simTime, type: "SPRING_IMMUNE", sourceId: def.instanceId, targetId: t.instanceId, extra: { housing: t.housingSpace, cap: def.ejectCapacity } });
                 if (DEBUG) console.log(`[SPRING_IMMUNE t=${simTime.toFixed(1)}s] ${t.instanceId} housing=${t.housingSpace} > cap=${def.ejectCapacity}`);
               }
             } else if (def.defenseId === "tornado-trap") {
@@ -1111,10 +1130,12 @@ export function simulateAttack(
               def.alive              = false;
               def.destroyedAt        = simTime;
               def.tornadoActiveUntil = simTime + def.tornadoDuration;
+              pushEvent({ time: simTime, type: "TORNADO_TRIGGER", sourceId: def.instanceId, targetId: t.instanceId, extra: { duration: def.tornadoDuration } });
               if (DEBUG) console.log(`[TORNADO_TRIGGER t=${simTime.toFixed(1)}s] ${def.instanceId} → ${t.instanceId} duration=${def.tornadoDuration}`);
             } else {
               def.isTriggered = true;
               def.triggerAt   = simTime + def.triggerDelay;
+              pushEvent({ time: simTime, type: "TRAP_TRIGGER", sourceId: def.instanceId, targetId: t.instanceId, extra: { trapType: def.defenseId } });
               if (DEBUG) {
                 const trapLabel = def.defenseId === "giant-bomb" ? "GIANT_BOMB"
                                 : def.defenseId === "air-bomb"   ? "AIR_BOMB"
@@ -1140,7 +1161,9 @@ export function simulateAttack(
             const actual = Math.min(def.trapDamage, t.hp);
             t.hp -= actual;
             def.totalDamageDealt += actual;
-            if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
+            pushEvent({ time: simTime, type: "TRAP_HIT", sourceId: def.instanceId, targetId: t.instanceId, value: actual, extra: { trapType: def.defenseId } });
+            if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime;
+              pushEvent({ time: simTime, type: "TROOP_DEATH", targetId: t.instanceId, extra: { troopId: t.troopId, cause: def.instanceId } }); }
             hits++;
           }
         }
@@ -1165,11 +1188,13 @@ export function simulateAttack(
         if (DEBUG && def.tornadoActiveUntil >= 0) {
           console.log(`[TORNADO_END t=${simTime.toFixed(1)}s] ${def.instanceId}`);
         }
+        pushEvent({ time: simTime, type: "TORNADO_END", sourceId: def.instanceId });
         def.tornadoActiveUntil = -2;  // mark ended to suppress repeated logs
         continue;
       }
 
       const tc: Vec2 = { x: def.position.x + def.size / 2, y: def.position.y + def.size / 2 };
+      let tornadoTickDmg = 0; let tornadoTickPulled = 0;
       for (const t of troops.values()) {
         if (!t.alive || !t.isActive || t.isUnderground) continue;
         if (t.troopId === "miner") continue;
@@ -1180,14 +1205,22 @@ export function simulateAttack(
         const dmg = Math.min(def.tornadoDps * TICK, t.hp);
         t.hp -= dmg;
         def.totalDamageDealt += dmg;
-        if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
+        tornadoTickDmg += dmg;
+        if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime;
+          pushEvent({ time: simTime, type: "TROOP_DEATH", targetId: t.instanceId, extra: { troopId: t.troopId, cause: def.instanceId } }); }
 
         // Attraction toward tornado center
         const attractionFactor = 1 / Math.min(5, Math.max(1, Math.ceil(t.housingSpace / 3)));
         const pullStep = 1.2 * attractionFactor * TICK;
         t.position = stepToward(t.position, tc, pullStep);
+        tornadoTickPulled++;
 
         if (DEBUG) console.log(`[TORNADO_TICK t=${simTime.toFixed(1)}s] ${def.instanceId} hit ${t.instanceId} dmg=${dmg.toFixed(1)} pull=${pullStep.toFixed(3)}`);
+      }
+      // Push one summary event per second (not per troop per tick)
+      if (tornadoTickPulled > 0 && tick % TICKS_PER_SECOND === 0) {
+        pushEvent({ time: simTime, type: "TORNADO_TICK", sourceId: def.instanceId, value: tornadoTickDmg,
+          extra: { pulled: tornadoTickPulled } });
       }
     }
 
@@ -1415,6 +1448,7 @@ export function simulateAttack(
         // Instantaneous push in orientation direction, clamped to grid
         t.position.x = Math.max(0, Math.min(GRID_SIZE - 1, t.position.x + dirX * def.pushStrength));
         t.position.y = Math.max(0, Math.min(GRID_SIZE - 1, t.position.y + dirY * def.pushStrength));
+        pushEvent({ time: simTime, type: "AIR_SWEEP", sourceId: def.instanceId, targetId: t.instanceId, value: def.pushStrength });
         if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] AIR_SWEEPER_PUSH ${def.instanceId} → ${t.instanceId} push=${def.pushStrength.toFixed(1)} tiles`);
       }
     }
@@ -1569,6 +1603,8 @@ export function simulateAttack(
             targetEntity.hp -= primaryActual;
             if (targetEntity.hp <= 0 && targetEntity.alive) {
               targetEntity.hp = 0; targetEntity.alive = false; targetEntity.destroyedAt = simTime;
+              const evTypePrimary = "defenseId" in targetEntity ? "DEFENSE_DESTROYED" : "BUILDING_DESTROYED";
+              pushEvent({ time: simTime, type: evTypePrimary, targetId: troop.targetId!, sourceId: troop.instanceId });
             }
             links.push({ from: tc(troop.position), to: tc(targetEntity.position), targetInstId: troop.targetId!, damage: primaryActual });
 
@@ -1616,6 +1652,8 @@ export function simulateAttack(
               targetEntity.hp = 0;
               targetEntity.alive = false;
               targetEntity.destroyedAt = simTime;
+              const evType = "defenseId" in targetEntity ? "DEFENSE_DESTROYED" : "BUILDING_DESTROYED";
+              pushEvent({ time: simTime, type: evType, targetId: troop.targetId!, sourceId: troop.instanceId });
             }
             if (troop.splashRadius > 0) {
               for (const [id, entity] of [
@@ -1906,12 +1944,14 @@ export function simulateAttack(
           const healed = Math.min(bh.repairPerSecond, dTarget.maxHp - dTarget.hp);
           if (healed > 0) {
             dTarget.hp += healed;
+            pushEvent({ time: simTime, type: "REPAIR", sourceId: bh.instanceId, targetId: bestId, value: healed });
             if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] BUILDER_HUT ${bh.instanceId} repaired ${bestId} +${healed.toFixed(0)}hp`);
           }
         } else if (bTarget) {
           const healed = Math.min(bh.repairPerSecond, bTarget.maxHp - bTarget.hp);
           if (healed > 0) {
             bTarget.hp += healed;
+            pushEvent({ time: simTime, type: "REPAIR", sourceId: bh.instanceId, targetId: bestId, value: healed });
             if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] BUILDER_HUT ${bh.instanceId} repaired ${bestId} +${healed.toFixed(0)}hp`);
           }
         }
@@ -2011,5 +2051,6 @@ export function simulateAttack(
     deathLightningEvents,
     troopFireEvents,
     targetChanges,
+    events: simEvents.sort((a, b) => a.time - b.time),
   };
 }
