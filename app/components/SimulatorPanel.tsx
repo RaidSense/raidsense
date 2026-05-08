@@ -85,12 +85,14 @@ const DEFENSE_FILL: Record<string, string> = {
   "inferno-tower":   "#f43f5e",
   "eagle-artillery": "#f59e0b",
   "scattershot":     "#ec4899",
+  "hidden-tesla":    "#64748b",
 };
 
 const PALETTE_DEFAULTS: Record<string, number> = {
   "cannon": 10, "archer-tower": 10, "mortar": 8, "air-defense": 8,
   "wizard-tower": 8, "x-bow": 5, "inferno-tower": 4,
   "eagle-artillery": 3, "scattershot": 2,
+  "hidden-tesla": 8,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────

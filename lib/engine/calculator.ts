@@ -54,6 +54,7 @@ const DEBUG = true;
 const DISCRETE_DEFENSE_IDS = new Set<string>([
   "cannon", "archer-tower", "mortar", "air-defense",
   "wizard-tower", "x-bow", "eagle-artillery", "scattershot",
+  "hidden-tesla",
 ]);
 
 // Ground troops that are actually air units — affects which defenses can target them.
@@ -370,6 +371,9 @@ interface DefenseState {
   singleLockDuration: number;        // seconds locked on current target
   // Inferno Tower multi-target
   multiTargetCount:   number;        // 0 = N/A
+  // ── Hidden Tesla ──────────────────────────────────────────────────────────
+  isHidden:         boolean;   // true = not yet activated (invisible to troops)
+  activationRadius: number;    // 0 = always active; 6 for hidden-tesla
 }
 
 interface WallState {
@@ -612,6 +616,8 @@ export function simulateAttack(
       singleLockTarget:   null,
       singleLockDuration: 0,
       multiTargetCount:   levelData.multiTargetCount ?? 0,
+      isHidden:         (defData.activationRadius ?? 0) > 0,
+      activationRadius: defData.activationRadius ?? 0,
     });
   }
 
@@ -717,11 +723,12 @@ export function simulateAttack(
     let bestDist = Infinity;
     const pref = troop.preferredTarget;
 
-    // Helper: nearest alive defense by footprint edge distance
+    // Helper: nearest alive VISIBLE defense by footprint edge distance.
+    // Hidden Tesla (isHidden=true) is invisible to troops until activated.
     function nearestDefense(): string | null {
       let id: string | null = null; let d = Infinity;
       for (const [k, def] of defenses) {
-        if (!def.alive) continue;
+        if (!def.alive || def.isHidden) continue;
         const dist = distanceToFootprint(troop.position, def.position, def.size);
         if (dist < d) { d = dist; id = k; }
       }
@@ -973,6 +980,22 @@ export function simulateAttack(
       }
     }
 
+    // --- Hidden Tesla activation (proximity trigger) -------------------------
+    for (const def of defenses.values()) {
+      if (!def.alive || !def.isHidden || def.activationRadius === 0) continue;
+      for (const t of troops.values()) {
+        if (!t.alive || !t.isActive || t.isUnderground) continue;
+        const dist = euclidean(def.position, { x: t.position.x + 0.5, y: t.position.y + 0.5 });
+        if (dist <= def.activationRadius) {
+          def.isHidden = false;
+          // Reset cooldown so Tesla fires after a normal initial delay
+          def.attackCooldown = def.attackSpeed;
+          if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] TESLA ACTIVÉE ${def.instanceId} (déclenchée par ${t.instanceId})`);
+          break;
+        }
+      }
+    }
+
     // --- TH weapon activation (fires on first damage) ------------------------
     // TODO: add 51 % HP alternative activation trigger (real CoC behaviour)
     for (const bld of buildings.values()) {
@@ -985,7 +1008,7 @@ export function simulateAttack(
     // --- Defense phase: each defense fires at a troop in range ---------------
 
     for (const def of defenses.values()) {
-      if (!def.alive) continue;
+      if (!def.alive || def.isHidden) continue; // hidden Tesla doesn't fire
 
       // ── Eagle Artillery burst mechanics ───────────────────────────────────
       // Handled before normal target selection so the burst target is locked

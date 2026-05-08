@@ -35,6 +35,11 @@ export interface Defense {
   splashType?: "radius" | "scattershot";
   /** Non-obvious mechanics: modes, splash radius, activation conditions, etc. */
   notes?: string;
+  /**
+   * Proximity radius (tiles) that triggers activation from hidden state.
+   * Only used by Hidden Tesla. Undefined / 0 = always active (normal defenses).
+   */
+  activationRadius?: number;
   levels: DefenseLevel[];
 }
 
@@ -253,6 +258,31 @@ export const DEFENSES: Defense[] = [
       { level: 3, hp: 4320, dps: 130, minRange: 3, maxRange: 10, townHallRequired: 14 },
       { level: 4, hp: 5180, dps: 156, minRange: 3, maxRange: 10, townHallRequired: 15 },
       { level: 5, hp: 6220, dps: 187, minRange: 3, maxRange: 10, townHallRequired: 16 },
+    ],
+  },
+  {
+    id: "hidden-tesla",
+    name: "Tesla camouflée",
+    targetType: "Ground & Air",
+    size: 2,
+    attackSpeed: 0.6,
+    activationRadius: 6,
+    notes: "Reste cachée jusqu'à ce qu'une troupe entre dans un rayon de 6 cases. TODO: activation à 51% HP (non implémenté).",
+    levels: [
+      { level:  1, hp:  600, dps:  34, minRange: 0, maxRange: 7, townHallRequired:  7 },
+      { level:  2, hp:  630, dps:  40, minRange: 0, maxRange: 7, townHallRequired:  7 },
+      { level:  3, hp:  660, dps:  48, minRange: 0, maxRange: 7, townHallRequired:  7 },
+      { level:  4, hp:  690, dps:  55, minRange: 0, maxRange: 7, townHallRequired:  8 },
+      { level:  5, hp:  730, dps:  64, minRange: 0, maxRange: 7, townHallRequired:  8 },
+      { level:  6, hp:  770, dps:  75, minRange: 0, maxRange: 7, townHallRequired:  8 },
+      { level:  7, hp:  810, dps:  87, minRange: 0, maxRange: 7, townHallRequired:  9 },
+      { level:  8, hp:  850, dps:  99, minRange: 0, maxRange: 7, townHallRequired: 10 },
+      { level:  9, hp:  900, dps: 110, minRange: 0, maxRange: 7, townHallRequired: 11 },
+      { level: 10, hp:  980, dps: 120, minRange: 0, maxRange: 7, townHallRequired: 12 },
+      { level: 11, hp: 1100, dps: 130, minRange: 0, maxRange: 7, townHallRequired: 13 },
+      { level: 12, hp: 1200, dps: 140, minRange: 0, maxRange: 7, townHallRequired: 13 },
+      { level: 13, hp: 1350, dps: 150, minRange: 0, maxRange: 7, townHallRequired: 14 },
+      { level: 14, hp: 1450, dps: 160, minRange: 0, maxRange: 7, townHallRequired: 15 },
     ],
   },
 ];
