@@ -2022,6 +2022,32 @@ function BattleGrid({
   const [hoveredBuildingId, setHoveredBuildingId] = useState<string | null>(null);
   const [cellPx, setCellPx] = useState<number>(CELL);
 
+  // ── Hidden Tesla reveal animation ────────────────────────────────────────
+  const TESLA_ANIM_S = 0.75;
+
+  const teslaActivations = useMemo(() => {
+    const map: Record<string, number> = {};
+    if (replayResult?.events) {
+      for (const ev of replayResult.events) {
+        if (ev.type === "TESLA_ACTIVATED" && ev.sourceId) map[ev.sourceId] = ev.time;
+      }
+    }
+    return map;
+  }, [replayResult?.events]);
+
+  // Returns 0..1 when animating/revealed during replay, null = still hidden
+  function teslaRevealProgress(instanceId: string): number | null {
+    if (debugMode) return 1;
+    if (replayTime === undefined) return null;
+    const activatedAt = teslaActivations[instanceId];
+    if (activatedAt === undefined) return null;
+    const t = replayTime - activatedAt;
+    if (t < 0) return null;
+    if (t >= TESLA_ANIM_S) return 1;
+    const raw = t / TESLA_ANIM_S;
+    return 1 - Math.pow(1 - raw, 2.5); // ease-out
+  }
+
   // Delete key removes selected element
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2222,14 +2248,88 @@ function BattleGrid({
     const name      = defData?.name ?? d.defenseId;
     const size      = defData?.size ?? 1;
     const isTrap    = !!defData?.isTrap;
+    const isHiddenTesla = d.defenseId === "hidden-tesla";
     const destroyed = replayDestroyedIds?.has(d.instanceId) ?? false;
     const hovered   = hoveredDefenseId === d.instanceId;
     const fill      = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
     const pxSize    = size * cellPx - 2;
     const fontSize  = Math.max(6, Math.min(11, pxSize * 0.35));
     // Traps and hidden-tesla are concealed in non-debug mode
-    const isHiddenDef = isTrap || d.defenseId === "hidden-tesla";
-    const trapOpacity = isHiddenDef && !debugMode ? 0.18 : 1;
+    const isHiddenDef = isTrap || isHiddenTesla;
+    // Tesla reveal progress (null = hidden, 0..1 = animating, 1 = fully revealed)
+    const revealProg = isHiddenTesla ? teslaRevealProgress(d.instanceId) : null;
+    const trapOpacity = isHiddenDef && !debugMode
+      ? (revealProg !== null ? 1 : 0.18)
+      : 1;
+
+    // ── Hidden Tesla trapdoor animation ──────────────────────────────────────
+    if (isHiddenTesla && revealProg !== null && revealProg < 1) {
+      const p = revealProg;
+      const doorFill = "#111827";
+      const holeY = d.y * cellPx + 1;
+      const holeX = d.x * cellPx + 1;
+      return (
+        <div key={d.instanceId} style={{
+          position: "absolute", left: holeX, top: holeY,
+          width: pxSize, height: pxSize, zIndex: 2, pointerEvents: "auto",
+        }}>
+          {/* Underground pit */}
+          <div style={{
+            position: "absolute", inset: 0,
+            background: "radial-gradient(circle, #0a0d14 60%, #040508 100%)",
+            borderRadius: 3, border: "1px solid #0a0f1e",
+          }} />
+
+          {/* Trapdoor — left panel */}
+          <div style={{
+            position: "absolute", left: 0, top: 0,
+            width: Math.floor(pxSize / 2), height: pxSize,
+            background: `linear-gradient(to right, ${doorFill}, #1c2640)`,
+            borderRadius: "3px 0 0 3px",
+            transformOrigin: "left center",
+            transform: `perspective(${pxSize * 5}px) rotateY(${-100 * p}deg)`,
+            zIndex: 3,
+            boxShadow: p > 0.3 ? "inset -2px 0 4px rgba(0,0,0,0.7)" : "none",
+          }} />
+
+          {/* Trapdoor — right panel */}
+          <div style={{
+            position: "absolute", right: 0, top: 0,
+            width: Math.ceil(pxSize / 2), height: pxSize,
+            background: `linear-gradient(to left, ${doorFill}, #1c2640)`,
+            borderRadius: "0 3px 3px 0",
+            transformOrigin: "right center",
+            transform: `perspective(${pxSize * 5}px) rotateY(${100 * p}deg)`,
+            zIndex: 3,
+            boxShadow: p > 0.3 ? "inset 2px 0 4px rgba(0,0,0,0.7)" : "none",
+          }} />
+
+          {/* Tesla emerging */}
+          <div
+            draggable
+            title={`${name} Lv${d.level} (${d.x},${d.y}) — révélée !`}
+            onDragStart={(e) => defDragStart(e, d, size)}
+            onClick={(e) => { e.stopPropagation(); onSelectElement?.(d.instanceId, "defense"); }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onRemove(d.instanceId); }}
+            style={{
+              position: "absolute", inset: 0,
+              backgroundColor: fill,
+              borderRadius: 3, cursor: "grab", zIndex: 4,
+              opacity: Math.min(1, p * 2),
+              transform: `translateY(${(1 - p) * pxSize * 0.55}px) scale(${0.15 + 0.85 * p})`,
+              filter: p < 0.7 ? `brightness(${1 + (1 - p) * 4}) saturate(1.8)` : "none",
+              display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
+              outline: hovered ? `2px solid ${fill}` : "none",
+              outlineOffset: "2px",
+            }}
+          >
+            <span style={{ color: "rgba(255,255,255,0.9)", fontWeight: 700, fontSize, lineHeight: 1, pointerEvents: "none", userSelect: "none" }}>
+              {d.level}
+            </span>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div
