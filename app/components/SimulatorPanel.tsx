@@ -87,6 +87,7 @@ const DEFENSE_FILL: Record<string, string> = {
   "scattershot":     "#ec4899",
   "hidden-tesla":    "#64748b",
   "bomb-tower":      "#b45309",
+  "air-sweeper":     "#0ea5e9",
 };
 
 const PALETTE_DEFAULTS: Record<string, number> = {
@@ -95,6 +96,7 @@ const PALETTE_DEFAULTS: Record<string, number> = {
   "eagle-artillery": 3, "scattershot": 2,
   "hidden-tesla": 8,
   "bomb-tower":   5,
+  "air-sweeper":  4,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -1150,8 +1152,9 @@ export default function SimulatorPanel() {
       return;
     }
     const defaultMode =
-      defenseId === "inferno-tower" ? "multi" :
-      defenseId === "x-bow"         ? "ground" : undefined;
+      defenseId === "inferno-tower" ? "multi"  :
+      defenseId === "x-bow"         ? "ground" :
+      defenseId === "air-sweeper"   ? "0"      : undefined;
     setPlaced((prev) => [...prev, { instanceId: `d-${Date.now()}`, defenseId, level, x, y, mode: defaultMode }]);
     clearResult();
   }
@@ -1164,6 +1167,11 @@ export default function SimulatorPanel() {
       }
       if (d.defenseId === "x-bow") {
         return { ...d, mode: d.mode === "both" ? "ground" : "both" };
+      }
+      if (d.defenseId === "air-sweeper") {
+        const angles = ["0", "90", "180", "270"];
+        const curr   = angles.indexOf(d.mode ?? "0");
+        return { ...d, mode: angles[(curr + 1) % angles.length] };
       }
       return d;
     }));
@@ -2158,10 +2166,15 @@ function BattleGrid({
     onWallDragState?.(false);
   }
 
-  const isModeCapable = (defId: string) => defId === "x-bow" || defId === "inferno-tower";
+  const isModeCapable = (defId: string) =>
+    defId === "x-bow" || defId === "inferno-tower" || defId === "air-sweeper";
   const modeLabel = (d: PlacedDefense) => {
     if (d.defenseId === "inferno-tower") return d.mode === "single" ? "S" : "M";
     if (d.defenseId === "x-bow")         return d.mode === "both"   ? "A" : "G";
+    if (d.defenseId === "air-sweeper") {
+      const labels: Record<string, string> = { "0": "→", "90": "↓", "180": "←", "270": "↑" };
+      return labels[d.mode ?? "0"] ?? "→";
+    }
     return "";
   };
 

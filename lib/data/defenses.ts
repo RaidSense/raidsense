@@ -16,6 +16,8 @@ export interface DefenseLevel {
   multiTargetCount?: number; // simultaneous targets (default 5 or 6)
   // ── Bomb Tower death explosion ────────────────────────────────────────────
   deathExplosionDamage?: number; // ground-troop splash damage at destruction
+  // ── Air Sweeper pulse ─────────────────────────────────────────────────────
+  pushStrength?: number;         // tiles pushed per pulse (air-sweeper only)
 }
 
 export interface Defense {
@@ -47,6 +49,10 @@ export interface Defense {
    * Only used by Bomb Tower. Affects ground troops only.
    */
   deathExplosionRadius?: number;
+  /** Seconds between pulses. Only used by Air Sweeper (5). */
+  pulseInterval?: number;
+  /** Sweep cone width in degrees. Only used by Air Sweeper (120). */
+  coneAngle?: number;
   levels: DefenseLevel[];
 }
 
@@ -265,6 +271,25 @@ export const DEFENSES: Defense[] = [
       { level: 3, hp: 4320, dps: 130, minRange: 3, maxRange: 10, townHallRequired: 14 },
       { level: 4, hp: 5180, dps: 156, minRange: 3, maxRange: 10, townHallRequired: 15 },
       { level: 5, hp: 6220, dps: 187, minRange: 3, maxRange: 10, townHallRequired: 16 },
+    ],
+  },
+  {
+    id: "air-sweeper",
+    name: "Souffleur d'Air",
+    targetType: "Air",
+    size: 2,
+    attackSpeed: 1,   // unused — air-sweeper uses pulseInterval, not standard attack
+    pulseInterval: 5, // seconds between sweeps
+    coneAngle: 120,   // degrees
+    notes: "Repousse les troupes aériennes dans un cône de 120°. Portée 15. Push instantané toutes les 5s. Orientable (0=droite, 90=bas, 180=gauche, 270=haut).",
+    levels: [
+      { level: 1, hp:  750, dps: 0, minRange: 0, maxRange: 15, townHallRequired:  6, pushStrength: 1.6 },
+      { level: 2, hp:  800, dps: 0, minRange: 0, maxRange: 15, townHallRequired:  6, pushStrength: 2.0 },
+      { level: 3, hp:  850, dps: 0, minRange: 0, maxRange: 15, townHallRequired:  7, pushStrength: 2.4 },
+      { level: 4, hp:  900, dps: 0, minRange: 0, maxRange: 15, townHallRequired:  8, pushStrength: 2.8 },
+      { level: 5, hp:  950, dps: 0, minRange: 0, maxRange: 15, townHallRequired:  9, pushStrength: 3.2 },
+      { level: 6, hp: 1000, dps: 0, minRange: 0, maxRange: 15, townHallRequired: 10, pushStrength: 3.6 },
+      { level: 7, hp: 1050, dps: 0, minRange: 0, maxRange: 15, townHallRequired: 11, pushStrength: 4.0 },
     ],
   },
   {

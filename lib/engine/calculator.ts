@@ -374,6 +374,12 @@ interface DefenseState {
   // ── Hidden Tesla ──────────────────────────────────────────────────────────
   isHidden:         boolean;   // true = not yet activated (invisible to troops)
   activationRadius: number;    // 0 = always active; 6 for hidden-tesla
+  // ── Air Sweeper ───────────────────────────────────────────────────────────
+  pulseInterval:  number;   // 0 = standard attack; 5 for air-sweeper
+  pulseCooldown:  number;   // seconds until next pulse fires
+  coneAngle:      number;   // cone half-width in radians (60° = π/3 for air-sweeper)
+  pushStrength:   number;   // tiles pushed per pulse
+  orientation:    number;   // degrees: 0=right, 90=down, 180=left, 270=up
   // ── Bomb Tower death explosion ─────────────────────────────────────────────
   deathExplosionDamage:    number;   // 0 = no explosion
   deathExplosionRadius:    number;
@@ -625,6 +631,11 @@ export function simulateAttack(
       deathExplosionDamage:    levelData.deathExplosionDamage ?? 0,
       deathExplosionRadius:    defData.deathExplosionRadius   ?? 0,
       deathExplosionTriggered: false,
+      pulseInterval:  defData.pulseInterval ?? 0,
+      pulseCooldown:  defData.pulseInterval ?? 0,   // first pulse at t = pulseInterval
+      coneAngle:      (defData.coneAngle ?? 0) / 2 * (Math.PI / 180), // store half-cone in radians
+      pushStrength:   levelData.pushStrength ?? 0,
+      orientation:    pl.defenseId === "air-sweeper" ? (parseInt(pl.mode ?? "0") || 0) : 0,
     });
   }
 
@@ -1015,7 +1026,7 @@ export function simulateAttack(
     // --- Defense phase: each defense fires at a troop in range ---------------
 
     for (const def of defenses.values()) {
-      if (!def.alive || def.isHidden) continue; // hidden Tesla doesn't fire
+      if (!def.alive || def.isHidden || def.pulseInterval > 0) continue; // hidden Tesla / air-sweeper skip
 
       // ── Eagle Artillery burst mechanics ───────────────────────────────────
       // Handled before normal target selection so the burst target is locked
@@ -1187,6 +1198,36 @@ export function simulateAttack(
         if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] HDV ATTAQUE ${bld.instanceId} → ${t.instanceId} | ${actual.toFixed(0)} dégâts`);
       }
       bld.weaponAttackCooldown = bld.weaponAttackSpeed;
+    }
+
+    // --- Air Sweeper pulse (every 5 s, pushes air troops within 120° cone) ---
+    for (const def of defenses.values()) {
+      if (!def.alive || def.pulseInterval === 0) continue;
+      def.pulseCooldown -= TICK;
+      if (def.pulseCooldown > 0) continue;
+      def.pulseCooldown += def.pulseInterval; // += avoids cumulative drift
+
+      const rad  = def.orientation * (Math.PI / 180);
+      const dirX = Math.cos(rad);
+      const dirY = Math.sin(rad);
+
+      for (const t of troops.values()) {
+        if (!t.alive || !t.isActive || !t.isAirUnit) continue;
+        const tx   = t.position.x + 0.5;
+        const ty   = t.position.y + 0.5;
+        const dx   = tx - def.position.x;
+        const dy   = ty - def.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist === 0 || dist > def.maxRange) continue;
+        // Cone check: angle between direction and troop vector
+        const dot   = (dx / dist) * dirX + (dy / dist) * dirY;
+        const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+        if (angle > def.coneAngle) continue; // outside cone (coneAngle is already half-cone in rad)
+        // Instantaneous push in orientation direction, clamped to grid
+        t.position.x = Math.max(0, Math.min(GRID_SIZE - 1, t.position.x + dirX * def.pushStrength));
+        t.position.y = Math.max(0, Math.min(GRID_SIZE - 1, t.position.y + dirY * def.pushStrength));
+        if (DEBUG) console.log(`[DEBUG t=${simTime.toFixed(2)}s] AIR_SWEEPER_PUSH ${def.instanceId} → ${t.instanceId} push=${def.pushStrength.toFixed(1)} tiles`);
+      }
     }
 
     // --- Troop phase: each troop moves or attacks a defense / building -------
