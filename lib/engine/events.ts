@@ -30,6 +30,8 @@ export type SimEventType =
   | "DEFENSE_DESTROYED"     // defense HP reaches 0
   | "BUILDING_DESTROYED"    // neutral building HP reaches 0
   | "WALL_DESTROYED"        // wall HP reaches 0
+  // Pathfinding
+  | "PATH_DECISION"         // troop decided DIRECT or BREAK_WALL
   // Future / extensible
   | "SUMMON"                // (future) troop summoned mid-battle
   | "SPELL_APPLIED"         // (future) spell effect

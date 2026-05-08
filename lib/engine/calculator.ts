@@ -5,6 +5,7 @@ import { type WallPlacement, WALL_HP } from "../data/walls";
 import { dijkstraPath, adjacentTilesForFootprint, type PathResult } from "./pathfinding";
 import { TOWN_HALL_DATA } from "../data/town-halls";
 import { type SimEvent } from "./events";
+import { computePathDecision, type PathDecision, type WallInfo } from "./path-decision";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -339,6 +340,8 @@ interface TroopState {
   speedMultiplier:  number;   // 1.0 = normal; reduced by TH slow zones
   attackMultiplier: number;   // 1.0 = normal; reduced by TH slow zones
   housingSpace:     number;   // space occupied in army camp (used by spring-trap)
+  // ── Path decision ────────────────────────────────────────────────────────
+  lastPathDecision: PathDecision | null;  // last decision emitted (to detect changes)
 }
 
 interface DefenseState {
@@ -599,6 +602,7 @@ export function simulateAttack(
       speedMultiplier:  1,
       attackMultiplier: 1,
       housingSpace:     troopData.housingSpace ?? 1,
+      lastPathDecision: null,
     });
   }
 
@@ -1763,17 +1767,49 @@ export function simulateAttack(
 
           const directDist = euclidean(troop.position, targetEntity.position);
 
-          if (result !== null && result.cost <= directDist * DETOUR_RATIO) {
+          // Collect alive walls as WallInfo for computePathDecision
+          const wallInfos: WallInfo[] = [];
+          for (const [wid, w] of walls) {
+            if (w.alive) wallInfos.push({ instanceId: wid, x: w.x, y: w.y, hp: w.hp, alive: true });
+          }
+
+          const decision = computePathDecision(
+            { instanceId: troop.instanceId, troopId: troop.troopId, dps: troop.dps,
+              speed: troop.speed, attackRange: troop.attackRange },
+            troop.position,
+            targetEntity.position,
+            result?.cost ?? null,
+            directDist,
+            DETOUR_RATIO,
+            wallInfos,
+          );
+
+          // Emit PATH_DECISION event only when decision changes (avoids flood)
+          if (troop.lastPathDecision?.mode !== decision.mode ||
+              troop.lastPathDecision?.targetWallId !== decision.targetWallId) {
+            troop.lastPathDecision = decision;
+            pushEvent({ time: simTime, type: "PATH_DECISION", sourceId: troop.instanceId,
+              targetId: decision.targetWallId,
+              value:    Math.round(decision.estimatedCost * 10) / 10,
+              extra:    { mode: decision.mode, troopId: troop.troopId } });
+            if (DEBUG) console.log(`[PATH_DECISION] ${troop.instanceId} ${decision.mode}${decision.targetWallId ? " " + decision.targetWallId : ""} cost=${decision.estimatedCost.toFixed(1)}`);
+          }
+
+          if (decision.mode === "DIRECT" && result !== null) {
             // ① Valid path AND detour is acceptable → follow it
             troop.bfsPath     = result.path;
             troop.bfsPathCost = result.cost;
             troop.wallAttackId = null;
-          } else {
-            // ② No path OR detour too long → pick best wall to break
-            const bestWallId = pickBestWall(troop.position, targetEntity.position);
-            troop.wallAttackId        = bestWallId;
-            troop.wallAttackLockTimer = bestWallId ? WALL_LOCK_TICKS : 0;
+          } else if (decision.mode === "BREAK_WALL" && decision.targetWallId) {
+            // ② Break wall chosen by computePathDecision
+            troop.wallAttackId        = decision.targetWallId;
+            troop.wallAttackLockTimer = WALL_LOCK_TICKS;
             troop.bfsPath = [];
+          } else {
+            // Fallback: straight movement (no walls or no path found)
+            troop.wallAttackId = null;
+            troop.bfsPath      = result?.path ?? [];
+            troop.bfsPathCost  = result?.cost ?? 0;
           }
         }
 
