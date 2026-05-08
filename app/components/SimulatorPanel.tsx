@@ -1510,6 +1510,149 @@ export default function SimulatorPanel() {
               ? `zone dorée = déploiement · ${placedTroops.length} troupe${placedTroops.length !== 1 ? "s" : ""} placée${placedTroops.length !== 1 ? "s" : ""}`
               : `${placed.length}/${MAX_DEFENSES} défenses`}
           </p>
+
+          {/* ── Optimiseur de placement ─────────────────────────────────── */}
+          {(placed.length > 0 || placedBuildings.length > 0) && totalTroops > 0 && (
+            <div className="rounded-xl border border-purple-800/50 bg-purple-950/20 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-purple-300">⚡ Optimiseur de placement</span>
+                <select
+                  value={optIterations}
+                  onChange={(e) => setOptIterations(Number(e.target.value))}
+                  className="text-xs bg-[#0d0d1a] text-purple-300 border border-purple-800/60 rounded px-1.5 py-0.5"
+                >
+                  {[20, 50, 100, 200].map((n) => (
+                    <option key={n} value={n}>{n} iter.</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-1">
+                {(["random", "spread", "grouped"] as const).map((s) => (
+                  <button key={s} onClick={() => setOptStrategy(s)}
+                    className={`flex-1 text-xs py-1 rounded border transition-colors capitalize ${
+                      optStrategy === s
+                        ? "border-purple-500/70 bg-purple-500/20 text-purple-200"
+                        : "border-slate-700/50 text-slate-500 hover:text-slate-300"
+                    }`}
+                  >{s}</button>
+                ))}
+              </div>
+              <button
+                onClick={handleOptimize}
+                disabled={isOptimizing}
+                className="w-full rounded-lg py-2 text-xs font-semibold bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-40 transition-colors"
+              >
+                {isOptimizing ? `⏳ Optimisation en cours…` : "Suggérer le meilleur placement"}
+              </button>
+              {optimizationResult && (
+                <div className="text-xs space-y-1 pt-1 border-t border-purple-800/40">
+                  <div className="flex justify-between">
+                    <span className="text-purple-400">Score</span>
+                    <span className="text-white font-bold">{Math.round(optimizationResult.best.score)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-purple-400">Défenses détruites</span>
+                    <span className="text-white">
+                      {Object.values(optimizationResult.best.simResult.defenses).filter((d) => d.destroyedAt !== null).length
+                       + Object.values(optimizationResult.best.simResult.buildings).filter((b) => b.destroyedAt !== null).length}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-purple-400">Troupes survivantes</span>
+                    <span className="text-white">
+                      {Object.values(optimizationResult.best.simResult.troops).filter((t) => t.destroyedAt === null).length}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-500">
+                    <span>{optimizationResult.testedCount} placements testés</span>
+                    <span>moy. {optimizationResult.avgScore}</span>
+                  </div>
+                  {optimizationResult.top3.length > 1 && (
+                    <div className="text-slate-600 text-xs">
+                      Top 3 scores : {optimizationResult.top3.map((c) => Math.round(c.score)).join(" · ")}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Modèles de bases ─────────────────────────────────────────── */}
+          <details className="rounded-xl border border-[#1e2a45] bg-[#06080f] px-3 py-2 text-xs">
+            <summary className="cursor-pointer font-semibold text-slate-300 select-none">
+              🏰 Modèles de bases ({BASE_PRESETS.length})
+            </summary>
+            <div className="mt-2 space-y-1">
+              {BASE_PRESETS.map((p) => (
+                <button key={p.id} onClick={() => handleLoadPreset(p)}
+                  className="w-full text-left rounded-lg px-3 py-1.5 bg-slate-800/40 hover:bg-slate-700/50 border border-slate-700/50 transition-colors">
+                  <span className="font-medium text-slate-200 text-xs">{p.name}</span>
+                  <span className="block text-slate-500 text-xs mt-0.5">{p.description}</span>
+                </button>
+              ))}
+            </div>
+          </details>
+
+          {/* ── Scénarios de test ────────────────────────────────────────── */}
+          <details className="rounded-xl border border-dashed border-yellow-600/40 bg-yellow-900/10 px-3 py-2 text-xs">
+            <summary className="cursor-pointer font-semibold text-yellow-400 select-none">
+              🧪 Scénarios de test
+            </summary>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {TEST_SCENARIOS.map((s) => (
+                <button
+                  key={s.name}
+                  onClick={() => loadScenario(s)}
+                  className="rounded bg-yellow-800/50 px-2 py-1 text-yellow-200 hover:bg-yellow-700/60 transition-colors"
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          </details>
+
+          {/* ── Simuler ──────────────────────────────────────────────────── */}
+          <button
+            onClick={handleSimulate}
+            disabled={(!placed.length && !placedBuildings.length) || (placementMode ? placedTroops.length === 0 : !totalTroops)}
+            className="w-full rounded-xl bg-cyan-500 py-3 text-sm font-semibold text-black transition-colors hover:bg-cyan-400 active:bg-cyan-600 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-black"
+          >
+            Simuler l&apos;attaque
+          </button>
+
+          {/* ── Replay ───────────────────────────────────────────────────── */}
+          {result && !showReplay && (
+            <button
+              onClick={startReplay}
+              className="w-full rounded-xl border border-cyan-500/40 bg-cyan-500/10 py-2.5 text-sm font-semibold text-cyan-400 transition-colors hover:bg-cyan-500/20"
+            >
+              ▶ Voir le replay
+            </button>
+          )}
+          {result && showReplay && (
+            <>
+              <ReplayControls
+                durationSeconds={result.durationSeconds}
+                replayTime={replayTime}
+                playing={replayPlaying}
+                speed={replaySpeed}
+                onPlayPause={() => { lastTsRef.current = 0; setReplayPlaying((p) => !p); }}
+                onSpeedToggle={() => setReplaySpeed((s) => (s === 1 ? 2 : 1))}
+                onSeek={(t) => { lastTsRef.current = 0; setReplayTime(t); }}
+                onClose={() => { setShowReplay(false); setReplayPlaying(false); }}
+              />
+              <button
+                onClick={() => setHpOnDamageOnly((v) => !v)}
+                className={`w-full rounded-xl border py-2 text-xs font-semibold transition-colors ${
+                  hpOnDamageOnly
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                    : "border-slate-500/40 bg-slate-500/10 text-slate-400 hover:bg-slate-500/20"
+                }`}
+              >
+                {hpOnDamageOnly ? "HP : au contact uniquement" : "HP : toujours visibles"}
+              </button>
+            </>
+          )}
         </div>
 
         {/* Sidebar */}
@@ -1665,150 +1808,6 @@ export default function SimulatorPanel() {
 
         </div>
       </div>
-
-      {/* ── Optimiseur de placement ──────────────────────────────────────── */}
-      {(placed.length > 0 || placedBuildings.length > 0) && totalTroops > 0 && (
-        <div className="rounded-xl border border-purple-800/50 bg-purple-950/20 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-purple-300">⚡ Optimiseur de placement</span>
-            <select
-              value={optIterations}
-              onChange={(e) => setOptIterations(Number(e.target.value))}
-              className="text-xs bg-[#0d0d1a] text-purple-300 border border-purple-800/60 rounded px-1.5 py-0.5"
-            >
-              {[20, 50, 100, 200].map((n) => (
-                <option key={n} value={n}>{n} iter.</option>
-              ))}
-            </select>
-          </div>
-          {/* Strategy selector */}
-          <div className="flex gap-1">
-            {(["random", "spread", "grouped"] as const).map((s) => (
-              <button key={s} onClick={() => setOptStrategy(s)}
-                className={`flex-1 text-xs py-1 rounded border transition-colors capitalize ${
-                  optStrategy === s
-                    ? "border-purple-500/70 bg-purple-500/20 text-purple-200"
-                    : "border-slate-700/50 text-slate-500 hover:text-slate-300"
-                }`}
-              >{s}</button>
-            ))}
-          </div>
-          <button
-            onClick={handleOptimize}
-            disabled={isOptimizing}
-            className="w-full rounded-lg py-2 text-xs font-semibold bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-40 transition-colors"
-          >
-            {isOptimizing ? `⏳ Optimisation en cours…` : "Suggérer le meilleur placement"}
-          </button>
-          {optimizationResult && (
-            <div className="text-xs space-y-1 pt-1 border-t border-purple-800/40">
-              <div className="flex justify-between">
-                <span className="text-purple-400">Score</span>
-                <span className="text-white font-bold">{Math.round(optimizationResult.best.score)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-purple-400">Défenses détruites</span>
-                <span className="text-white">
-                  {Object.values(optimizationResult.best.simResult.defenses).filter((d) => d.destroyedAt !== null).length
-                   + Object.values(optimizationResult.best.simResult.buildings).filter((b) => b.destroyedAt !== null).length}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-purple-400">Troupes survivantes</span>
-                <span className="text-white">
-                  {Object.values(optimizationResult.best.simResult.troops).filter((t) => t.destroyedAt === null).length}
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-500">
-                <span>{optimizationResult.testedCount} placements testés</span>
-                <span>moy. {optimizationResult.avgScore}</span>
-              </div>
-              {optimizationResult.top3.length > 1 && (
-                <div className="text-slate-600 text-xs">
-                  Top 3 scores : {optimizationResult.top3.map((c) => Math.round(c.score)).join(" · ")}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Modèles de bases ────────────────────────────────────────────── */}
-      <details className="rounded-xl border border-[#1e2a45] bg-[#06080f] px-3 py-2 text-xs">
-        <summary className="cursor-pointer font-semibold text-slate-300 select-none">
-          🏰 Modèles de bases ({BASE_PRESETS.length})
-        </summary>
-        <div className="mt-2 space-y-1">
-          {BASE_PRESETS.map((p) => (
-            <button key={p.id} onClick={() => handleLoadPreset(p)}
-              className="w-full text-left rounded-lg px-3 py-1.5 bg-slate-800/40 hover:bg-slate-700/50 border border-slate-700/50 transition-colors">
-              <span className="font-medium text-slate-200 text-xs">{p.name}</span>
-              <span className="block text-slate-500 text-xs mt-0.5">{p.description}</span>
-            </button>
-          ))}
-        </div>
-      </details>
-
-      {/* ── Scénarios de test (temporaire) ──────────────────────────────── */}
-      <details className="rounded-xl border border-dashed border-yellow-600/40 bg-yellow-900/10 px-3 py-2 text-xs">
-        <summary className="cursor-pointer font-semibold text-yellow-400 select-none">
-          🧪 Scénarios de test
-        </summary>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {TEST_SCENARIOS.map((s) => (
-            <button
-              key={s.name}
-              onClick={() => loadScenario(s)}
-              className="rounded bg-yellow-800/50 px-2 py-1 text-yellow-200 hover:bg-yellow-700/60 transition-colors"
-            >
-              {s.name}
-            </button>
-          ))}
-        </div>
-      </details>
-
-      {/* Simulate */}
-      <button
-        onClick={handleSimulate}
-        disabled={(!placed.length && !placedBuildings.length) || (placementMode ? placedTroops.length === 0 : !totalTroops)}
-        className="w-full rounded-xl bg-cyan-500 py-3 text-sm font-semibold text-black transition-colors hover:bg-cyan-400 active:bg-cyan-600 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-black"
-      >
-        Simuler l&apos;attaque
-      </button>
-
-      {/* Replay controls */}
-      {result && !showReplay && (
-        <button
-          onClick={startReplay}
-          className="w-full rounded-xl border border-cyan-500/40 bg-cyan-500/10 py-2.5 text-sm font-semibold text-cyan-400 transition-colors hover:bg-cyan-500/20"
-        >
-          ▶ Voir le replay
-        </button>
-      )}
-      {result && showReplay && (
-        <>
-          <ReplayControls
-            durationSeconds={result.durationSeconds}
-            replayTime={replayTime}
-            playing={replayPlaying}
-            speed={replaySpeed}
-            onPlayPause={() => { lastTsRef.current = 0; setReplayPlaying((p) => !p); }}
-            onSpeedToggle={() => setReplaySpeed((s) => (s === 1 ? 2 : 1))}
-            onSeek={(t) => { lastTsRef.current = 0; setReplayTime(t); }}
-            onClose={() => { setShowReplay(false); setReplayPlaying(false); }}
-          />
-          <button
-            onClick={() => setHpOnDamageOnly((v) => !v)}
-            className={`w-full rounded-xl border py-2 text-xs font-semibold transition-colors ${
-              hpOnDamageOnly
-                ? "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
-                : "border-slate-500/40 bg-slate-500/10 text-slate-400 hover:bg-slate-500/20"
-            }`}
-          >
-            {hpOnDamageOnly ? "HP : au contact uniquement" : "HP : toujours visibles"}
-          </button>
-        </>
-      )}
 
       {/* Analysis panel */}
       {analysisStats && (
