@@ -2227,8 +2227,9 @@ function BattleGrid({
     const fill      = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
     const pxSize    = size * cellPx - 2;
     const fontSize  = Math.max(6, Math.min(11, pxSize * 0.35));
-    // Traps are hidden in non-debug mode
-    const trapOpacity = isTrap && !debugMode ? 0.18 : 1;
+    // Traps and hidden-tesla are concealed in non-debug mode
+    const isHiddenDef = isTrap || d.defenseId === "hidden-tesla";
+    const trapOpacity = isHiddenDef && !debugMode ? 0.18 : 1;
 
     return (
       <div
