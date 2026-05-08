@@ -54,7 +54,7 @@ const DEBUG = true;
 const DISCRETE_DEFENSE_IDS = new Set<string>([
   "cannon", "archer-tower", "mortar", "air-defense",
   "wizard-tower", "x-bow", "eagle-artillery", "scattershot",
-  "hidden-tesla", "bomb-tower",
+  "hidden-tesla", "bomb-tower", "monolith",
 ]);
 
 // Ground troops that are actually air units — affects which defenses can target them.
@@ -374,6 +374,8 @@ interface DefenseState {
   // ── Hidden Tesla ──────────────────────────────────────────────────────────
   isHidden:         boolean;   // true = not yet activated (invisible to troops)
   activationRadius: number;    // 0 = always active; 6 for hidden-tesla
+  // ── Monolith HP% bonus ────────────────────────────────────────────────────
+  hpPercentBonus: number;   // 0 for all other defenses; >0 for monolith
   // ── Air Sweeper ───────────────────────────────────────────────────────────
   pulseInterval:  number;   // 0 = standard attack; 5 for air-sweeper
   pulseCooldown:  number;   // seconds until next pulse fires
@@ -631,6 +633,7 @@ export function simulateAttack(
       deathExplosionDamage:    levelData.deathExplosionDamage ?? 0,
       deathExplosionRadius:    defData.deathExplosionRadius   ?? 0,
       deathExplosionTriggered: false,
+      hpPercentBonus: levelData.hpPercentBonus ?? 0,
       pulseInterval:  defData.pulseInterval ?? 0,
       pulseCooldown:  defData.pulseInterval ?? 0,   // first pulse at t = pulseInterval
       coneAngle:      (defData.coneAngle ?? 0) / 2 * (Math.PI / 180), // store half-cone in radians
@@ -1166,7 +1169,18 @@ export function simulateAttack(
         continue;
       }
 
-      const stdDamage = def.dps * def.attackSpeed;
+      // Monolith: dps field = base damage per shot; add HP% bonus on target's MAX HP.
+      // All other defenses: damage = dps * attackSpeed (standard).
+      let stdDamage = def.dps * def.attackSpeed;
+      if (def.defenseId === "monolith" && def.hpPercentBonus > 0) {
+        const baseDmg  = def.dps;  // "dps" stores damage-per-shot for monolith
+        const bonusDmg = target.maxHp * def.hpPercentBonus;
+        stdDamage = baseDmg + bonusDmg;
+        if (DEBUG) console.log(
+          `[DEBUG t=${simTime.toFixed(2)}s] MONOLITH ${def.instanceId} → ${def.targetId}` +
+          ` base=${baseDmg.toFixed(0)} bonus=${bonusDmg.toFixed(0)} total=${stdDamage.toFixed(0)}`
+        );
+      }
       if (def.splashType === "scattershot") {
         const coneHits = applyScattershotConeSplash(def, target, stdDamage, simTime);
         fireShot(def, target, stdDamage, simTime, coneHits.map((h) => h.id), coneHits);

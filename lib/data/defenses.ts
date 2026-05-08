@@ -18,6 +18,13 @@ export interface DefenseLevel {
   deathExplosionDamage?: number; // ground-troop splash damage at destruction
   // ── Air Sweeper pulse ─────────────────────────────────────────────────────
   pushStrength?: number;         // tiles pushed per pulse (air-sweeper only)
+  // ── Monolith HP% bonus ────────────────────────────────────────────────────
+  /**
+   * Bonus damage as a fraction of the target's MAX HP.
+   * Applied per shot in addition to base dps damage.
+   * Only used by Monolith.
+   */
+  hpPercentBonus?: number;
 }
 
 export interface Defense {
@@ -271,6 +278,20 @@ export const DEFENSES: Defense[] = [
       { level: 3, hp: 4320, dps: 130, minRange: 3, maxRange: 10, townHallRequired: 14 },
       { level: 4, hp: 5180, dps: 156, minRange: 3, maxRange: 10, townHallRequired: 15 },
       { level: 5, hp: 6220, dps: 187, minRange: 3, maxRange: 10, townHallRequired: 16 },
+    ],
+  },
+  {
+    id: "monolith",
+    name: "Monolithe",
+    targetType: "Ground & Air",
+    size: 3,
+    attackSpeed: 1.5,
+    notes: "Défense single-target. Inflige dégâts fixes + bonus basé sur les PV MAX de la cible (hpPercentBonus). Disponible uniquement au TH15+. Maximum 1 par village.",
+    levels: [
+      { level: 1, hp: 4747, dps: 150, minRange: 0, maxRange: 11, townHallRequired: 15, hpPercentBonus: 0.11 },
+      { level: 2, hp: 5050, dps: 175, minRange: 0, maxRange: 11, townHallRequired: 15, hpPercentBonus: 0.12 },
+      { level: 3, hp: 5353, dps: 193, minRange: 0, maxRange: 11, townHallRequired: 16, hpPercentBonus: 0.13 },
+      { level: 4, hp: 5656, dps: 209, minRange: 0, maxRange: 11, townHallRequired: 17, hpPercentBonus: 0.14 },
     ],
   },
   {
