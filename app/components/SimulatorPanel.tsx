@@ -1512,10 +1512,10 @@ export default function SimulatorPanel() {
       </div>
 
       {/* ── Grille + contrôles ───────────────────────────────────────────────── */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
 
-        {/* Grid */}
-        <div className="min-w-0 flex-1 space-y-2">
+        {/* Grid — taille bornée, centrée */}
+        <div className="flex-none space-y-2 mx-auto" style={{ width: "min(100%, 540px)" }}>
           <p className="text-xs text-slate-500">
             {wallMode
               ? "Mode mur : cliquer/glisser pour poser · cliquer sur mur existant pour supprimer"
@@ -1650,6 +1650,10 @@ export default function SimulatorPanel() {
               ? `zone dorée = déploiement · ${placedTroops.length} troupe${placedTroops.length !== 1 ? "s" : ""} placée${placedTroops.length !== 1 ? "s" : ""}`
               : `${placed.length}/${MAX_DEFENSES} défenses`}
           </p>
+        </div>
+
+        {/* ── Panneau de contrôles (à droite de la grille) ─────────────── */}
+        <div className="flex-none w-full xl:w-64 space-y-3">
 
           {/* ── Optimiseur de placement ─────────────────────────────────── */}
           {(placed.length > 0 || placedBuildings.length > 0) && totalTroops > 0 && (
@@ -1793,9 +1797,8 @@ export default function SimulatorPanel() {
               </button>
             </>
           )}
-        </div>
-
-      </div>
+        </div>{/* fin panneau contrôles */}
+      </div>{/* fin grille + contrôles */}
 
       {/* Analysis panel */}
       {analysisStats && (
@@ -2321,7 +2324,7 @@ function BattleGrid({
       <div
         key={b.instanceId}
         draggable
-        title={`${name} Lv${b.level} (${b.x},${b.y}) — glisser: déplacer · clic: supprimer`}
+        title={`${name} Lv${b.level} (${b.x},${b.y}) — glisser pour déplacer · clic-droit pour supprimer`}
         onDragStart={(e) => {
           setDragEntityId(b.instanceId);
           onDragEntityStart?.(size);
