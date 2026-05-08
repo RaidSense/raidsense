@@ -19,24 +19,25 @@ export interface THDefenseLimits {
   "air-sweeper"?:      number;
   "monolith"?:         number;
   "builder-hut"?:      number;
+  "bomb"?:             number;
 }
 
 export const TH_DEFENSE_LIMITS: Record<number, THDefenseLimits> = {
   1:  { cannon: 2 },
   2:  { cannon: 2,  "archer-tower": 1 },
-  3:  { cannon: 2,  "archer-tower": 2,  mortar: 1 },
-  4:  { cannon: 3,  "archer-tower": 3,  mortar: 1,  "air-defense": 1 },
-  5:  { cannon: 4,  "archer-tower": 4,  mortar: 2,  "air-defense": 2 },
-  6:  { cannon: 5,  "archer-tower": 5,  mortar: 2,  "air-defense": 3,  "wizard-tower": 1,  "air-sweeper": 1 },
-  7:  { cannon: 6,  "archer-tower": 6,  mortar: 3,  "air-defense": 3,  "wizard-tower": 2,  "hidden-tesla": 2,  "air-sweeper": 1 },
-  8:  { cannon: 6,  "archer-tower": 6,  mortar: 3,  "air-defense": 4,  "wizard-tower": 3,  "hidden-tesla": 3,  "bomb-tower": 1,  "air-sweeper": 1 },
-  9:  { cannon: 7,  "archer-tower": 7,  mortar: 4,  "air-defense": 4,  "wizard-tower": 4,  "x-bow": 2,  "hidden-tesla": 4,  "bomb-tower": 1,  "air-sweeper": 2 },
-  10: { cannon: 8,  "archer-tower": 8,  mortar: 4,  "air-defense": 4,  "wizard-tower": 5,  "x-bow": 3,  "inferno-tower": 1,  "hidden-tesla": 4,  "bomb-tower": 2,  "air-sweeper": 2 },
-  11: { cannon: 9,  "archer-tower": 9,  mortar: 4,  "air-defense": 4,  "wizard-tower": 5,  "x-bow": 3,  "inferno-tower": 2,  "eagle-artillery": 1,  "hidden-tesla": 4,  "bomb-tower": 2,  "air-sweeper": 2 },
-  12: { cannon: 9,  "archer-tower": 9,  mortar: 4,  "air-defense": 4,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  "hidden-tesla": 5,  "bomb-tower": 3,  "air-sweeper": 2 },
-  13: { cannon: 10, "archer-tower": 9,  mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 1,  "hidden-tesla": 5,  "bomb-tower": 3,  "air-sweeper": 2 },
-  14: { cannon: 11, "archer-tower": 10, mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 2,  "hidden-tesla": 5,  "bomb-tower": 4,  "air-sweeper": 2,  "builder-hut": 5 },
-  15: { cannon: 11, "archer-tower": 11, mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 2,  "hidden-tesla": 5,  "bomb-tower": 4,  "air-sweeper": 2,  "monolith": 1,  "builder-hut": 5 },
+  3:  { cannon: 2,  "archer-tower": 2,  mortar: 1,  bomb: 2 },
+  4:  { cannon: 3,  "archer-tower": 3,  mortar: 1,  "air-defense": 1,  bomb: 2 },
+  5:  { cannon: 4,  "archer-tower": 4,  mortar: 2,  "air-defense": 2,  bomb: 4 },
+  6:  { cannon: 5,  "archer-tower": 5,  mortar: 2,  "air-defense": 3,  "wizard-tower": 1,  "air-sweeper": 1,  bomb: 4 },
+  7:  { cannon: 6,  "archer-tower": 6,  mortar: 3,  "air-defense": 3,  "wizard-tower": 2,  "hidden-tesla": 2,  "air-sweeper": 1,  bomb: 6 },
+  8:  { cannon: 6,  "archer-tower": 6,  mortar: 3,  "air-defense": 4,  "wizard-tower": 3,  "hidden-tesla": 3,  "bomb-tower": 1,  "air-sweeper": 1,  bomb: 8 },
+  9:  { cannon: 7,  "archer-tower": 7,  mortar: 4,  "air-defense": 4,  "wizard-tower": 4,  "x-bow": 2,  "hidden-tesla": 4,  "bomb-tower": 1,  "air-sweeper": 2,  bomb: 8 },
+  10: { cannon: 8,  "archer-tower": 8,  mortar: 4,  "air-defense": 4,  "wizard-tower": 5,  "x-bow": 3,  "inferno-tower": 1,  "hidden-tesla": 4,  "bomb-tower": 2,  "air-sweeper": 2,  bomb: 10 },
+  11: { cannon: 9,  "archer-tower": 9,  mortar: 4,  "air-defense": 4,  "wizard-tower": 5,  "x-bow": 3,  "inferno-tower": 2,  "eagle-artillery": 1,  "hidden-tesla": 4,  "bomb-tower": 2,  "air-sweeper": 2,  bomb: 10 },
+  12: { cannon: 9,  "archer-tower": 9,  mortar: 4,  "air-defense": 4,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  "hidden-tesla": 5,  "bomb-tower": 3,  "air-sweeper": 2,  bomb: 10 },
+  13: { cannon: 10, "archer-tower": 9,  mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 1,  "hidden-tesla": 5,  "bomb-tower": 3,  "air-sweeper": 2,  bomb: 12 },
+  14: { cannon: 11, "archer-tower": 10, mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 2,  "hidden-tesla": 5,  "bomb-tower": 4,  "air-sweeper": 2,  "builder-hut": 5,  bomb: 12 },
+  15: { cannon: 11, "archer-tower": 11, mortar: 5,  "air-defense": 5,  "wizard-tower": 5,  "x-bow": 4,  "inferno-tower": 3,  "eagle-artillery": 1,  scattershot: 2,  "hidden-tesla": 5,  "bomb-tower": 4,  "air-sweeper": 2,  "monolith": 1,  "builder-hut": 5,  bomb: 12 },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

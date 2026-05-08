@@ -387,9 +387,19 @@ interface DefenseState {
   pushStrength:   number;   // tiles pushed per pulse
   orientation:    number;   // degrees: 0=right, 90=down, 180=left, 270=up
   // ── Bomb Tower death explosion ─────────────────────────────────────────────
-  deathExplosionDamage:    number;   // 0 = no explosion
+  deathExplosionDamage:    number;
   deathExplosionRadius:    number;
   deathExplosionTriggered: boolean;
+  // ── Trap (bomb) ────────────────────────────────────────────────────────────
+  isTrap:            boolean;
+  triggerRadius:     number;
+  explosionRadius:   number;
+  triggerDelay:      number;
+  trapDamage:        number;
+  targetsGroundOnly: boolean;
+  isTriggered:       boolean;   // troop entered triggerRadius
+  triggerAt:         number;    // simTime of explosion (-1 = not triggered)
+  consumed:          boolean;   // true after explosion
 }
 
 interface WallState {
@@ -640,6 +650,15 @@ export function simulateAttack(
       maxHp:          levelData.hp,
       hpPercentBonus: levelData.hpPercentBonus  ?? 0,
       repairPerSecond: levelData.repairPerSecond ?? 0,
+      isTrap:            !!defData.isTrap,
+      triggerRadius:     defData.triggerRadius    ?? 0,
+      explosionRadius:   defData.explosionRadius  ?? 0,
+      triggerDelay:      defData.triggerDelay     ?? 0,
+      trapDamage:        levelData.trapDamage     ?? 0,
+      targetsGroundOnly: !!defData.targetsGroundOnly,
+      isTriggered: false,
+      triggerAt:   -1,
+      consumed:    false,
       pulseInterval:  defData.pulseInterval ?? 0,
       pulseCooldown:  defData.pulseInterval ?? 0,   // first pulse at t = pulseInterval
       coneAngle:      (defData.coneAngle ?? 0) / 2 * (Math.PI / 180), // store half-cone in radians
@@ -750,12 +769,12 @@ export function simulateAttack(
     let bestDist = Infinity;
     const pref = troop.preferredTarget;
 
-    // Helper: nearest alive VISIBLE defense by footprint edge distance.
-    // Hidden Tesla (isHidden=true) is invisible to troops until activated.
+    // Helper: nearest alive VISIBLE defense.
+    // Traps (bombs) and hidden Tesla are never targetable by troops.
     function nearestDefense(): string | null {
       let id: string | null = null; let d = Infinity;
       for (const [k, def] of defenses) {
-        if (!def.alive || def.isHidden) continue;
+        if (!def.alive || def.isHidden || def.isTrap) continue;
         const dist = distanceToFootprint(troop.position, def.position, def.size);
         if (dist < d) { d = dist; id = k; }
       }
@@ -1023,6 +1042,47 @@ export function simulateAttack(
       }
     }
 
+    // --- Trap phase: trigger detection + explosion ---------------------------
+    for (const def of defenses.values()) {
+      if (!def.alive || !def.isTrap || def.consumed) continue;
+
+      // Trigger check
+      if (!def.isTriggered) {
+        for (const t of troops.values()) {
+          if (!t.alive || !t.isActive || t.isUnderground) continue;
+          if (def.targetsGroundOnly && t.isAirUnit) continue;
+          const dist = euclidean(def.position, { x: t.position.x + 0.5, y: t.position.y + 0.5 });
+          if (dist <= def.triggerRadius) {
+            def.isTriggered = true;
+            def.triggerAt   = simTime + def.triggerDelay;
+            if (DEBUG) console.log(`[BOMB_TRIGGER t=${simTime.toFixed(1)}s] ${def.instanceId} → ${t.instanceId}`);
+            break;
+          }
+        }
+      }
+
+      // Explosion check
+      if (def.isTriggered && simTime >= def.triggerAt) {
+        let hits = 0;
+        for (const t of troops.values()) {
+          if (!t.alive || !t.isActive) continue;
+          if (def.targetsGroundOnly && t.isAirUnit) continue;
+          const dist = euclidean(def.position, { x: t.position.x + 0.5, y: t.position.y + 0.5 });
+          if (dist <= def.explosionRadius) {
+            const actual = Math.min(def.trapDamage, t.hp);
+            t.hp -= actual;
+            def.totalDamageDealt += actual;
+            if (t.hp <= 0 && t.alive) { t.hp = 0; t.alive = false; t.destroyedAt = simTime; }
+            hits++;
+          }
+        }
+        def.consumed    = true;
+        def.alive       = false;
+        def.destroyedAt = simTime;
+        if (DEBUG) console.log(`[BOMB_EXPLODE t=${simTime.toFixed(1)}s] ${def.instanceId} dmg=${def.trapDamage} hits=${hits}`);
+      }
+    }
+
     // --- TH weapon activation (fires on first damage) ------------------------
     // TODO: add 51 % HP alternative activation trigger (real CoC behaviour)
     for (const bld of buildings.values()) {
@@ -1035,7 +1095,7 @@ export function simulateAttack(
     // --- Defense phase: each defense fires at a troop in range ---------------
 
     for (const def of defenses.values()) {
-      if (!def.alive || def.isHidden || def.pulseInterval > 0) continue; // hidden Tesla / air-sweeper skip
+      if (!def.alive || def.isHidden || def.pulseInterval > 0 || def.isTrap) continue; // Tesla/sweeper/traps skip
 
       // ── Eagle Artillery burst mechanics ───────────────────────────────────
       // Handled before normal target selection so the burst target is locked
@@ -1777,7 +1837,9 @@ export function simulateAttack(
 
     const hasPendingLightning = [...troops.values()].some(t => t.deathLightningPending.length > 0);
     const allTroopsDead       = [...troops.values()].every((t) => !t.alive);
-    const allTargetsDown      = [...defenses.values()].every((d) => !d.alive)
+    // Consumed traps don't count as "alive targets" for termination.
+    const allTargetsDown      = [...defenses.values()].filter(d => !d.isTrap).every(d => !d.alive)
+                             && [...defenses.values()].filter(d => d.isTrap && !d.consumed && d.alive).length === 0
                              && [...buildings.values()].every((b) => !b.alive)
                              && [...walls.values()].every((w) => !w.alive);
     if ((allTroopsDead && !hasPendingLightning) || allTargetsDown) break;

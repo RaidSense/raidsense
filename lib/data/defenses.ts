@@ -15,7 +15,9 @@ export interface DefenseLevel {
   // ── Inferno Tower multi-target mode ─────────────────────────────────────
   multiTargetCount?: number; // simultaneous targets (default 5 or 6)
   // ── Bomb Tower death explosion ────────────────────────────────────────────
-  deathExplosionDamage?: number; // ground-troop splash damage at destruction
+  deathExplosionDamage?: number;
+  // ── Trap damage (bomb, etc.) ──────────────────────────────────────────────
+  trapDamage?: number;
   // ── Air Sweeper pulse ─────────────────────────────────────────────────────
   pushStrength?: number;         // tiles pushed per pulse (air-sweeper only)
   // ── Monolith HP% bonus ────────────────────────────────────────────────────
@@ -44,6 +46,20 @@ export interface Defense {
   splashType?: "radius" | "scattershot";
   /** Non-obvious mechanics: modes, splash radius, activation conditions, etc. */
   notes?: string;
+  /** "trap" for single-use hidden traps. */
+  category?: string;
+  isTrap?: boolean;
+  singleUse?: boolean;
+  /** Hidden from troops (never targetable). */
+  hidden?: boolean;
+  /** Radius (tiles) that triggers the trap when a troop enters. */
+  triggerRadius?: number;
+  /** Radius (tiles) of the explosion on detonation. */
+  explosionRadius?: number;
+  /** Seconds between trigger and detonation. */
+  triggerDelay?: number;
+  /** Only ground troops trigger and get hit by this trap. */
+  targetsGroundOnly?: boolean;
   /**
    * Proximity radius (tiles) that triggers activation from hidden state.
    * Only used by Hidden Tesla. Undefined / 0 = always active (normal defenses).
@@ -374,6 +390,38 @@ export const DEFENSES: Defense[] = [
       { level: 12, hp: 1200, dps: 140, minRange: 0, maxRange: 7, townHallRequired: 13 },
       { level: 13, hp: 1350, dps: 150, minRange: 0, maxRange: 7, townHallRequired: 14 },
       { level: 14, hp: 1450, dps: 160, minRange: 0, maxRange: 7, townHallRequired: 15 },
+    ],
+  },
+  {
+    id: "bomb",
+    name: "Bombe",
+    targetType: "Ground",   // irrelevant for traps but required by interface
+    size: 1,
+    attackSpeed: 1,         // irrelevant — trap uses triggerDelay
+    category: "trap",
+    isTrap: true,
+    singleUse: true,
+    hidden: true,
+    triggerRadius: 1.5,
+    explosionRadius: 3,
+    triggerDelay: 1.5,
+    targetsGroundOnly: true,
+    notes: "Piège à usage unique. Invisible aux troupes. Déclenché par une troupe au sol dans rayon 1.5. Explose après 1.5s dans rayon 3.",
+    levels: [
+      { level:  1, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  3, trapDamage:  20 },
+      { level:  2, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  3, trapDamage:  24 },
+      { level:  3, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  5, trapDamage:  29 },
+      { level:  4, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  5, trapDamage:  35 },
+      { level:  5, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  7, trapDamage:  42 },
+      { level:  6, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  7, trapDamage:  54 },
+      { level:  7, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  8, trapDamage:  72 },
+      { level:  8, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  8, trapDamage:  92 },
+      { level:  9, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 10, trapDamage: 125 },
+      { level: 10, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 10, trapDamage: 140 },
+      { level: 11, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 155 },
+      { level: 12, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 170 },
+      { level: 13, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 185 },
+      { level: 14, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 200 },
     ],
   },
 ];

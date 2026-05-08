@@ -90,6 +90,7 @@ const DEFENSE_FILL: Record<string, string> = {
   "air-sweeper":     "#0ea5e9",
   "monolith":        "#4c1d95",
   "builder-hut":     "#d97706",
+  "bomb":            "#dc2626",
 };
 
 const PALETTE_DEFAULTS: Record<string, number> = {
@@ -101,6 +102,7 @@ const PALETTE_DEFAULTS: Record<string, number> = {
   "air-sweeper":  4,
   "monolith":     1,
   "builder-hut":  4,
+  "bomb":         6,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -2216,11 +2218,14 @@ function BattleGrid({
     const defData   = DEFENSES.find((def) => def.id === d.defenseId);
     const name      = defData?.name ?? d.defenseId;
     const size      = defData?.size ?? 1;
+    const isTrap    = !!defData?.isTrap;
     const destroyed = replayDestroyedIds?.has(d.instanceId) ?? false;
     const hovered   = hoveredDefenseId === d.instanceId;
     const fill      = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
     const pxSize    = size * cellPx - 2;
     const fontSize  = Math.max(6, Math.min(11, pxSize * 0.35));
+    // Traps are hidden in non-debug mode
+    const trapOpacity = isTrap && !debugMode ? 0.18 : 1;
 
     return (
       <div
@@ -2249,11 +2254,11 @@ function BattleGrid({
           width:           pxSize,
           height:          pxSize,
           backgroundColor: fill,
-          borderRadius:    3,
+          borderRadius:    isTrap ? 50 : 3,   // bombs render as circles
           cursor:          "grab",
           zIndex:          1,
           pointerEvents:   "auto",
-          opacity:         destroyed ? 0.1 : 1,
+          opacity:         destroyed ? 0.1 : trapOpacity,
           outline:         hovered ? `2px solid ${fill}` : "none",
           outlineOffset:   "2px",
           transition:      "opacity 0.2s, outline 0.1s",
@@ -2475,6 +2480,32 @@ function BattleGrid({
               {minR > 0 && (
                 <circle cx={cx} cy={cy} r={minR} fill="none" stroke={color} strokeWidth={1} strokeOpacity={0.55} strokeDasharray="5 3" />
               )}
+            </g>
+          );
+        })()}
+        {/* Bomb trap ranges — trigger radius + explosion radius */}
+        {(() => {
+          const activeId = hoveredDefenseId ?? selectedId;
+          if (!activeId) return null;
+          const d = placed.find((p) => p.instanceId === activeId && p.defenseId === "bomb");
+          if (!d) return null;
+          const defData = DEFENSES.find((def) => def.id === "bomb");
+          if (!defData) return null;
+          const size = defData.size ?? 1;
+          const cx = (d.x + size / 2) * cellPx;
+          const cy = (d.y + size / 2) * cellPx;
+          const triggerR    = (defData.triggerRadius   ?? 1.5) * cellPx;
+          const explosionR  = (defData.explosionRadius ?? 3)   * cellPx;
+          return (
+            <g>
+              {/* Explosion radius */}
+              <circle cx={cx} cy={cy} r={explosionR}
+                fill="rgba(239,68,68,0.12)" stroke="#dc2626" strokeWidth={1.5}
+                strokeOpacity={0.75} strokeDasharray="5 3" />
+              {/* Trigger radius */}
+              <circle cx={cx} cy={cy} r={triggerR}
+                fill="rgba(251,191,36,0.15)" stroke="#fbbf24" strokeWidth={1}
+                strokeOpacity={0.85} />
             </g>
           );
         })()}
