@@ -606,6 +606,7 @@ export default function SimulatorPanel() {
   const [showRanges,      setShowRanges]      = useState<boolean>(false);
   const [showHeatmap,     setShowHeatmap]     = useState<boolean>(false);
   const [debugMode,       setDebugMode]       = useState<boolean>(false);
+  const [entityTab,       setEntityTab]       = useState<"defenses" | "buildings" | "walls" | "troops">("defenses");
   const [selectedTH,      setSelectedTH]      = useState<number>(15);
   const [placementError,  setPlacementError]  = useState<string | null>(null);
   const placementErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1371,15 +1372,154 @@ export default function SimulatorPanel() {
         <p className="text-sm text-slate-400">Simulateur d&apos;attaque Clash of Clans</p>
       </header>
 
-      {/* Grid + sidebar */}
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+      {/* ── Panneau entités (tabs, en haut) ─────────────────────────────────── */}
+      <div className="rounded-2xl border border-[#141a30] bg-[#06080f] overflow-hidden">
+        {/* Tab bar */}
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-[#141a30] bg-[#080b14]">
+          {/* Tabs */}
+          <div className="flex gap-1">
+            {([
+              { key: "defenses",  label: "🏹 Défenses" },
+              { key: "buildings", label: "🏛 Bâtiments" },
+              { key: "walls",     label: "🧱 Murs" },
+              { key: "troops",    label: "⚔️ Troupes" },
+            ] as const).map(({ key, label }) => (
+              <button key={key} onClick={() => setEntityTab(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  entityTab === key
+                    ? "bg-cyan-500/20 border border-cyan-500/40 text-cyan-300"
+                    : "text-slate-500 hover:text-slate-300 border border-transparent"
+                }`}
+              >{label}</button>
+            ))}
+          </div>
+
+          {/* HDV selector */}
+          <div className="flex items-center gap-2 ml-auto flex-wrap">
+            <span className="text-xs text-slate-500 font-medium flex-shrink-0">HDV</span>
+            <div className="flex gap-0.5 flex-wrap">
+              {Array.from({ length: 15 }, (_, i) => i + 1).map((lv) => (
+                <button key={lv} onClick={() => { setSelectedTH(lv); setPlacementError(null); }}
+                  className={`w-7 h-6 rounded text-xs font-bold transition-colors border ${
+                    selectedTH === lv
+                      ? "border-cyan-400/70 bg-cyan-500/20 text-cyan-200"
+                      : "border-slate-700 text-slate-500 hover:text-slate-300"
+                  }`}
+                >{lv}</button>
+              ))}
+            </div>
+            <span className="text-xs text-slate-600 flex-shrink-0">
+              {placed.length}/{getTotalDefenseLimit(selectedTH)}
+            </span>
+          </div>
+        </div>
+
+        {/* Tab content */}
+        <div className="p-3">
+          {entityTab === "defenses" && (
+            <CompactDefensePalette
+              palLevels={palLevels}
+              onLevelChange={(id, lv) => setPalLevels((p) => ({ ...p, [id]: lv }))}
+              cellSize={cellSize}
+              onDragItemStart={(sz) => setDragItemSize(sz)}
+              placedCounts={Object.fromEntries(DEFENSES.map((d) => [d.id, placed.filter((p) => p.defenseId === d.id).length]))}
+              thLimits={TH_DEFENSE_LIMITS[selectedTH] as Record<string, number> ?? {}}
+            />
+          )}
+          {entityTab === "buildings" && (
+            <CompactBuildingPalette
+              palLevels={palBuildingLevels}
+              onLevelChange={(id, lv) => setPalBuildingLevels((p) => ({ ...p, [id]: lv }))}
+              cellSize={cellSize}
+              onDragItemStart={(sz) => setDragItemSize(sz)}
+            />
+          )}
+          {entityTab === "walls" && (
+            <div className="space-y-3">
+              {/* Level selector + mode toggle */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-medium">Niveau ({wallLevel})</span>
+                  <button
+                    onClick={() => { setWallMode((m) => !m); clearResult(); }}
+                    className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                      wallMode
+                        ? "bg-amber-500/20 border border-amber-500/40 text-amber-300"
+                        : "bg-slate-700/40 border border-slate-600/40 text-slate-400 hover:text-slate-200"
+                    }`}
+                  >{wallMode ? "✓ Mode mur actif" : "Activer mode mur"}</button>
+                </div>
+                {placedWalls.length > 0 && (
+                  <div className="flex items-center gap-2 ml-auto">
+                    <span className="text-xs text-slate-500">{placedWalls.length} murs</span>
+                    <select value={globalWallLevel} onChange={(e) => setGlobalWallLevel(Number(e.target.value))}
+                      className="text-xs bg-[#0d0d1a] text-amber-300 border border-slate-700 rounded px-1 py-0.5">
+                      {Array.from({ length: MAX_WALL_LEVEL }, (_, i) => i + 1).map((lv) => (
+                        <option key={lv} value={lv}>{lv}</option>
+                      ))}
+                    </select>
+                    <button onClick={handleApplyGlobalWallLevel}
+                      className="text-xs px-2 py-1 rounded bg-amber-800/40 hover:bg-amber-700/50 text-amber-300 border border-amber-700/40">↻ Tous</button>
+                    <button onClick={() => { setPlacedWalls([]); clearResult(); }}
+                      className="text-xs text-red-400 hover:text-red-300">✕ Effacer</button>
+                  </div>
+                )}
+              </div>
+              {/* Level buttons */}
+              <div className="flex flex-wrap gap-1">
+                {Array.from({ length: MAX_WALL_LEVEL }, (_, i) => i + 1).map((lv) => (
+                  <button key={lv} onClick={() => setWallLevel(lv)} title={`Lv${lv} — ${WALL_HP[lv]} HP`}
+                    className={`w-7 h-7 rounded text-xs font-bold transition-colors border ${
+                      wallLevel === lv
+                        ? "border-amber-400/60 bg-amber-500/20 text-amber-200"
+                        : "border-slate-700 text-slate-400 hover:text-slate-200"
+                    }`}
+                  >{lv}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          {entityTab === "troops" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-medium">
+                  {placementMode ? "Placement manuel activé" : `${totalTroops} troupe${totalTroops !== 1 ? "s" : ""}`}
+                </span>
+                <button
+                  onClick={() => { setPlacementMode((p) => !p); setSelectedSlotId(null); clearResult(); }}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    placementMode ? "bg-cyan-500 text-black" : "border border-[#1e2a45] text-slate-400 hover:border-slate-500"
+                  }`}
+                >{placementMode ? "✓ Placement manuel" : "Placement manuel"}</button>
+              </div>
+              {!placementMode && (
+                <TroopComposer slots={troopSlots} totalCount={totalTroops} onUpdate={updateTroopSlot} onAdd={addTroopSlot} onRemove={removeTroopSlot} />
+              )}
+              {placementMode && (
+                <TroopPlacementPanel slots={troopSlots} selectedSlotId={selectedSlotId} onSelectSlot={setSelectedSlotId}
+                  placedTroops={placedTroops} onRemoveTroop={handleRemovePlacedTroop} onUpdateTiming={handleUpdateTroopTiming} />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Error message */}
+        {placementError && (
+          <div className="px-4 py-2 border-t border-red-900/30 bg-red-950/20">
+            <p className="text-xs text-red-400">✕ {placementError}</p>
+          </div>
+        )}
+      </div>
+
+      {/* ── Grille + contrôles ───────────────────────────────────────────────── */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
 
         {/* Grid */}
-        <div className="min-w-0 flex-1 space-y-2" style={{ maxWidth: 560 }}>
+        <div className="min-w-0 flex-1 space-y-2">
           <p className="text-xs text-slate-500">
             {wallMode
               ? "Mode mur : cliquer/glisser pour poser · cliquer sur mur existant pour supprimer"
-              : "Glisser une défense depuis le panneau → poser sur la grille · Cliquer pour supprimer"}
+              : "Glisser depuis le panneau ci-dessus → poser sur la grille · Cliquer pour supprimer"}
           </p>
           {/* View toggles */}
           <div className="flex gap-1.5 flex-wrap">
@@ -1655,158 +1795,6 @@ export default function SimulatorPanel() {
           )}
         </div>
 
-        {/* Sidebar */}
-        <div className="flex-1 space-y-4" style={{ minWidth: 300 }}>
-
-          {/* HDV selector */}
-          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-300">Niveau HDV actif</h2>
-              <span className="text-xs text-slate-500">{placed.length}/{getTotalDefenseLimit(selectedTH)} défenses</span>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {Array.from({ length: 15 }, (_, i) => i + 1).map((lv) => (
-                <button
-                  key={lv}
-                  onClick={() => { setSelectedTH(lv); setPlacementError(null); }}
-                  className={`w-8 h-7 rounded text-xs font-bold transition-colors border ${
-                    selectedTH === lv
-                      ? "border-cyan-400/70 bg-cyan-500/20 text-cyan-200"
-                      : "border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500"
-                  }`}
-                >{lv}</button>
-              ))}
-            </div>
-            {/* Error message */}
-            {placementError && (
-              <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1">
-                ✕ {placementError}
-              </p>
-            )}
-          </section>
-
-          {/* Defense palette */}
-          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-5 space-y-3">
-            <h2 className="text-base font-semibold text-slate-100">Défenses</h2>
-            <DefensePalette
-              palLevels={palLevels}
-              onLevelChange={(id, lv) => setPalLevels((p) => ({ ...p, [id]: lv }))}
-              cellSize={cellSize}
-              onDragItemStart={(sz) => setDragItemSize(sz)}
-              placedCounts={Object.fromEntries(
-                DEFENSES.map((d) => [d.id, placed.filter((p) => p.defenseId === d.id).length])
-              )}
-              thLimits={TH_DEFENSE_LIMITS[selectedTH] as Record<string, number> ?? {}}
-            />
-          </section>
-
-          {/* Neutral building palette */}
-          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-slate-100">Bâtiments</h2>
-              <span className="text-xs text-slate-500">{placedBuildings.length}/{MAX_BUILDINGS} sur la grille</span>
-            </div>
-            <BuildingPalette
-              palLevels={palBuildingLevels}
-              onLevelChange={(id, lv) => setPalBuildingLevels((p) => ({ ...p, [id]: lv }))}
-              cellSize={cellSize}
-              onDragItemStart={(sz) => setDragItemSize(sz)}
-            />
-          </section>
-
-          {/* Wall placement */}
-          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-slate-100">Murs</h2>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">{placedWalls.length} posés</span>
-                <button
-                  onClick={() => { setWallMode((m) => !m); clearResult(); }}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
-                    wallMode
-                      ? "bg-amber-500/20 border border-amber-500/40 text-amber-300"
-                      : "bg-slate-700/40 border border-slate-600/40 text-slate-400 hover:text-slate-200"
-                  }`}
-                >{wallMode ? "✓ Mode mur" : "Mode mur"}</button>
-              </div>
-            </div>
-            {/* Level selector */}
-            <div className="space-y-1">
-              <p className="text-xs text-slate-500">Niveau ({wallLevel})</p>
-              <div className="flex flex-wrap gap-1">
-                {Array.from({ length: MAX_WALL_LEVEL }, (_, i) => i + 1).map((lv) => (
-                  <button key={lv}
-                    onClick={() => setWallLevel(lv)}
-                    title={`Lv${lv} — ${WALL_HP[lv]} HP`}
-                    className={`w-7 h-7 rounded text-xs font-bold transition-colors border ${
-                      wallLevel === lv
-                        ? "border-amber-400/60 bg-amber-500/20 text-amber-200"
-                        : "border-slate-700 text-slate-400 hover:text-slate-200"
-                    }`}
-                  >{lv}</button>
-                ))}
-              </div>
-            </div>
-            {/* Niveau global */}
-            {placedWalls.length > 0 && (
-              <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
-                <span className="text-xs text-slate-500 flex-shrink-0">Appliquer Lv</span>
-                <select
-                  value={globalWallLevel}
-                  onChange={(e) => setGlobalWallLevel(Number(e.target.value))}
-                  className="text-xs bg-[#0d0d1a] text-amber-300 border border-slate-700 rounded px-1 py-0.5 flex-1"
-                >
-                  {Array.from({ length: MAX_WALL_LEVEL }, (_, i) => i + 1).map((lv) => (
-                    <option key={lv} value={lv}>{lv}</option>
-                  ))}
-                </select>
-                <button onClick={handleApplyGlobalWallLevel}
-                  className="text-xs px-2 py-1 rounded bg-amber-800/40 hover:bg-amber-700/50 text-amber-300 border border-amber-700/40">
-                  ↻ Tous
-                </button>
-                <button onClick={() => { setPlacedWalls([]); clearResult(); }}
-                  className="text-xs text-red-400 hover:text-red-300">✕</button>
-              </div>
-            )}
-          </section>
-
-          {/* Troop composer */}
-          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-slate-100">Troupes</h2>
-              <button
-                onClick={() => { setPlacementMode((p) => !p); setSelectedSlotId(null); clearResult(); }}
-                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
-                  placementMode
-                    ? "bg-cyan-500 text-black"
-                    : "border border-[#1e2a45] text-slate-400 hover:border-slate-500"
-                }`}
-              >
-                {placementMode ? "✓ Placement manuel" : "Placement manuel"}
-              </button>
-            </div>
-            {!placementMode && (
-              <TroopComposer
-                slots={troopSlots}
-                totalCount={totalTroops}
-                onUpdate={updateTroopSlot}
-                onAdd={addTroopSlot}
-                onRemove={removeTroopSlot}
-              />
-            )}
-            {placementMode && (
-              <TroopPlacementPanel
-                slots={troopSlots}
-                selectedSlotId={selectedSlotId}
-                onSelectSlot={setSelectedSlotId}
-                placedTroops={placedTroops}
-                onRemoveTroop={handleRemovePlacedTroop}
-                onUpdateTiming={handleUpdateTroopTiming}
-              />
-            )}
-          </section>
-
-        </div>
       </div>
 
       {/* Analysis panel */}
@@ -3269,6 +3257,131 @@ function ReplayControls({
 }
 
 // ── TroopPlacementPanel ────────────────────────────────────────────────────
+
+// ── CompactDefensePalette ─────────────────────────────────────────────────────
+
+function CompactDefensePalette({
+  palLevels, onLevelChange, cellSize, onDragItemStart, placedCounts = {}, thLimits = {},
+}: {
+  palLevels: Record<string, number>;
+  onLevelChange: (id: string, level: number) => void;
+  cellSize: number;
+  onDragItemStart?: (size: number) => void;
+  placedCounts?: Record<string, number>;
+  thLimits?: Record<string, number>;
+}) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-1.5">
+      {DEFENSES.map((def) => {
+        const level   = palLevels[def.id] ?? 1;
+        const fill    = DEFENSE_FILL[def.id] ?? "#ef4444";
+        const limit   = thLimits[def.id] ?? 0;
+        const placed  = placedCounts[def.id] ?? 0;
+        const atLimit = limit > 0 && placed >= limit;
+        const unavail = limit === 0;
+        const disabled = atLimit || unavail;
+        return (
+          <div
+            key={def.id}
+            draggable={!disabled}
+            onDragStart={(e) => {
+              if (disabled) { e.preventDefault(); return; }
+              e.dataTransfer.setData("text/plain", JSON.stringify({ defenseId: def.id, level }));
+              e.dataTransfer.effectAllowed = "copy";
+              onDragItemStart?.(def.size ?? 1);
+              const tilePx = Math.round(cellSize * (def.size ?? 1));
+              const ghost  = document.createElement("div");
+              ghost.style.cssText = [`width:${tilePx}px`,`height:${tilePx}px`,`background:${fill}`,"border-radius:4px","opacity:0.85","position:fixed","top:-200px","left:0","pointer-events:none"].join(";");
+              document.body.appendChild(ghost);
+              e.dataTransfer.setDragImage(ghost, tilePx/2, tilePx/2);
+              setTimeout(() => document.body.removeChild(ghost), 0);
+            }}
+            className={`rounded-lg border p-2 transition-colors select-none ${
+              disabled
+                ? "border-slate-800 bg-[#080a10] cursor-not-allowed opacity-40"
+                : "border-[#1e2a45] bg-[#0d1020] cursor-grab active:cursor-grabbing hover:border-slate-500"
+            }`}
+          >
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <div className="flex-shrink-0 rounded-sm" style={{ width: 8, height: 8, backgroundColor: disabled ? "#444" : fill }} />
+              <span className={`flex-1 text-xs font-medium truncate ${disabled ? "text-slate-600" : "text-slate-200"}`}>{def.name}</span>
+              {limit > 0 && (
+                <span className={`text-xs font-mono flex-shrink-0 ${atLimit ? "text-red-400" : placed > 0 ? "text-amber-400" : "text-slate-600"}`}>
+                  {placed}/{limit}
+                </span>
+              )}
+              {unavail && <span className="text-xs text-slate-700">—</span>}
+            </div>
+            <div draggable={false} onDragStart={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <select
+                value={level}
+                onChange={(e) => onLevelChange(def.id, Number(e.target.value))}
+                disabled={disabled}
+                className="w-full rounded border border-[#252f50] bg-[#06080f] text-xs text-slate-300 px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500 disabled:opacity-40"
+              >
+                {def.levels.map((l) => <option key={l.level} value={l.level}>Lv {l.level}</option>)}
+              </select>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── CompactBuildingPalette ────────────────────────────────────────────────────
+
+function CompactBuildingPalette({
+  palLevels, onLevelChange, cellSize, onDragItemStart,
+}: {
+  palLevels: Record<string, number>;
+  onLevelChange: (id: string, level: number) => void;
+  cellSize: number;
+  onDragItemStart?: (size: number) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-1.5">
+      {NEUTRAL_BUILDINGS.map((bld) => {
+        const level = palLevels[bld.id] ?? bld.levels[bld.levels.length - 1].level;
+        const fill  = BUILDING_FILL[bld.category] ?? BUILDING_FILL["building"];
+        return (
+          <div
+            key={bld.id}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData("text/plain", JSON.stringify({ buildingId: bld.id, level }));
+              e.dataTransfer.effectAllowed = "copy";
+              onDragItemStart?.(bld.size ?? 1);
+              const tilePx = Math.round(cellSize * (bld.size ?? 1));
+              const ghost  = document.createElement("div");
+              ghost.style.cssText = [`width:${tilePx}px`,`height:${tilePx}px`,`background:${fill}`,"border-radius:3px","border:1px dashed rgba(255,255,255,0.3)","opacity:0.8","position:fixed","top:-200px","left:0","pointer-events:none"].join(";");
+              document.body.appendChild(ghost);
+              e.dataTransfer.setDragImage(ghost, tilePx/2, tilePx/2);
+              setTimeout(() => document.body.removeChild(ghost), 0);
+            }}
+            className="rounded-lg border border-[#1e2a45] bg-[#0d1020] p-2 cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none"
+          >
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <div className="flex-shrink-0 rounded-sm" style={{ width: 8, height: 8, backgroundColor: fill }} />
+              <span className="flex-1 text-xs font-medium text-slate-200 truncate">{bld.name}</span>
+            </div>
+            <div draggable={false} onDragStart={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <select
+                value={level}
+                onChange={(e) => onLevelChange(bld.id, Number(e.target.value))}
+                className="w-full rounded border border-[#252f50] bg-[#06080f] text-xs text-slate-300 px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              >
+                {bld.levels.map((l) => <option key={l.level} value={l.level}>Lv {l.level}</option>)}
+              </select>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── TroopPlacementPanel ───────────────────────────────────────────────────────
 
 function TroopPlacementPanel({
   slots, selectedSlotId, onSelectSlot, placedTroops, onRemoveTroop, onUpdateTiming,
