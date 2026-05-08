@@ -543,6 +543,31 @@ export const DEFENSES: Defense[] = [
       { level: 3, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 12, tornadoDuration: 7, tornadoDps:  8 },
     ],
   },
+  {
+    id: "seeking-air-mine",
+    name: "Mine chercheuse",
+    targetType: "Air",
+    size: 1,
+    attackSpeed: 1,
+    category: "trap",
+    isTrap: true,
+    singleUse: true,
+    hidden: true,
+    triggerRadius: 4,
+    triggerDelay: 0,
+    targetsAirOnly: true,
+    notes: "Piège aérien single-target. Cible l'unité aérienne avec le plus de HP dans rayon 4. Dégâts instantanés.",
+    levels: [
+      { level: 1, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  7, trapDamage: 1500 },
+      { level: 2, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  9, trapDamage: 1800 },
+      { level: 3, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 10, trapDamage: 2100 },
+      { level: 4, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 2500 },
+      { level: 5, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 15, trapDamage: 2800 },
+      { level: 6, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 16, trapDamage: 3000 },
+      { level: 7, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 17, trapDamage: 3200 },
+      { level: 8, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 18, trapDamage: 3350 },
+    ],
+  },
 ];
 
 export function getDefenseById(id: string): Defense | undefined {

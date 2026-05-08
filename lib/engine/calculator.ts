@@ -1063,6 +1063,29 @@ export function simulateAttack(
 
       // Trigger check
       if (!def.isTriggered) {
+        if (def.defenseId === "seeking-air-mine") {
+          // Scan ALL air units in triggerRadius; pick highest HP, tie-break = closest
+          let bestTroop: TroopState | null = null;
+          let bestDist = Infinity;
+          for (const t of troops.values()) {
+            if (!t.alive || !t.isActive || t.isUnderground) continue;
+            if (!t.isAirUnit) continue;
+            const dist = euclidean(def.position, { x: t.position.x + 0.5, y: t.position.y + 0.5 });
+            if (dist > def.triggerRadius) continue;
+            if (bestTroop === null || t.hp > bestTroop.hp || (t.hp === bestTroop.hp && dist < bestDist)) {
+              bestTroop = t; bestDist = dist;
+            }
+          }
+          if (bestTroop !== null) {
+            def.consumed = true; def.alive = false; def.destroyedAt = simTime;
+            if (DEBUG) console.log(`[SEEKING_AIR_MINE_TRIGGER t=${simTime.toFixed(1)}s] ${def.instanceId} → ${bestTroop.instanceId} hp=${bestTroop.hp.toFixed(0)}`);
+            const actual = Math.min(def.trapDamage, bestTroop.hp);
+            bestTroop.hp -= actual;
+            def.totalDamageDealt += actual;
+            if (bestTroop.hp <= 0 && bestTroop.alive) { bestTroop.hp = 0; bestTroop.alive = false; bestTroop.destroyedAt = simTime; }
+            if (DEBUG) console.log(`[SEEKING_AIR_MINE_HIT t=${simTime.toFixed(1)}s] ${def.instanceId} dmg=${actual.toFixed(0)} target=${bestTroop.instanceId} remaining=${bestTroop.hp.toFixed(0)}`);
+          }
+        } else {
         for (const t of troops.values()) {
           if (!t.alive || !t.isActive || t.isUnderground) continue;
           if (t.troopId === "miner") continue;           // tornado (and other traps) ignore miners
@@ -1102,6 +1125,7 @@ export function simulateAttack(
             break;
           }
         }
+        } // end else (non seeking-air-mine)
       }
 
       // Explosion check (bomb only — spring-trap is instant in trigger block)

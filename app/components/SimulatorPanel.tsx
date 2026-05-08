@@ -94,7 +94,8 @@ const DEFENSE_FILL: Record<string, string> = {
   "spring-trap":     "#22c55e",
   "giant-bomb":      "#b91c1c",
   "air-bomb":        "#06b6d4",
-  "tornado-trap":    "#a855f7",
+  "tornado-trap":       "#a855f7",
+  "seeking-air-mine":   "#db2777",
 };
 
 const PALETTE_DEFAULTS: Record<string, number> = {
@@ -110,7 +111,8 @@ const PALETTE_DEFAULTS: Record<string, number> = {
   "spring-trap":  6,
   "giant-bomb":   9,
   "air-bomb":     8,
-  "tornado-trap": 3,
+  "tornado-trap":     3,
+  "seeking-air-mine": 5,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -2573,6 +2575,32 @@ function BattleGrid({
               <text x={cx} y={cy - effectR - 6} textAnchor="middle"
                 fontSize={10} fill="#a855f7" opacity={0.9}>
                 {`${dur}s · ${dps} DPS`}
+              </text>
+            </g>
+          );
+        })()}
+        {/* Seeking-air-mine — trigger radius only (single-target) */}
+        {(() => {
+          const activeId = hoveredDefenseId ?? selectedId;
+          if (!activeId) return null;
+          const d = placed.find((p) => p.instanceId === activeId && p.defenseId === "seeking-air-mine");
+          if (!d) return null;
+          const defData   = DEFENSES.find((def) => def.id === "seeking-air-mine");
+          if (!defData) return null;
+          const levelData = defData.levels.find((l) => l.level === d.level);
+          const size      = defData.size ?? 1;
+          const cx        = (d.x + size / 2) * cellPx;
+          const cy        = (d.y + size / 2) * cellPx;
+          const triggerR  = (defData.triggerRadius ?? 4) * cellPx;
+          const dmg       = (levelData as any)?.trapDamage ?? 0;
+          return (
+            <g>
+              <circle cx={cx} cy={cy} r={triggerR}
+                fill="rgba(219,39,119,0.10)" stroke="#db2777" strokeWidth={2}
+                strokeOpacity={0.85} />
+              <text x={cx} y={cy - triggerR - 6} textAnchor="middle"
+                fontSize={10} fill="#db2777" opacity={0.95}>
+                {`SAM · ${dmg} dmg`}
               </text>
             </g>
           );

@@ -39,7 +39,7 @@ const DEF_SIZE: Record<string, number> = {
   "cannon": 3, "archer-tower": 2, "mortar": 3, "air-defense": 3,
   "wizard-tower": 3, "x-bow": 3, "inferno-tower": 2,
   "eagle-artillery": 4, "scattershot": 3,
-  "hidden-tesla": 2, "bomb-tower": 3, "air-sweeper": 2, "monolith": 3, "builder-hut": 3, "bomb": 1, "spring-trap": 1, "giant-bomb": 2, "air-bomb": 1, "tornado-trap": 1,
+  "hidden-tesla": 2, "bomb-tower": 3, "air-sweeper": 2, "monolith": 3, "builder-hut": 3, "bomb": 1, "spring-trap": 1, "giant-bomb": 2, "air-bomb": 1, "tornado-trap": 1, "seeking-air-mine": 1,
 };
 
 // Building sizes (footprint side length)
