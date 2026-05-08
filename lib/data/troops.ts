@@ -28,6 +28,12 @@ export interface Troop {
   chainFalloff?: number;
   /** Max centre-to-centre distance in tiles between consecutive chain targets. */
   chainRange?: number;
+  /**
+   * CoC housing space consumed when the troop is trained.
+   * Used by spring trap to decide whether to eject the troop.
+   * Default 1 when not specified.
+   */
+  housingSpace?: number;
   levels: TroopLevel[];
 }
 
@@ -39,6 +45,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground",
     preferredTarget: "None",
     attackSpeed: 1.0,
+    housingSpace: 1,
     levels: [
       { level: 1,  hp: 45,  dps: 9,  townHallRequired: 1  },
       { level: 2,  hp: 54,  dps: 12, townHallRequired: 1  },
@@ -62,6 +69,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground & Air",
     preferredTarget: "None",
     attackSpeed: 1.0,
+    housingSpace: 1,
     levels: [
       { level: 1, hp: 20,  dps: 7,   townHallRequired: 1 },
       { level: 2, hp: 23,  dps: 9,   townHallRequired: 1 },
@@ -86,6 +94,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground",
     preferredTarget: "Defenses",
     attackSpeed: 2.0,
+    housingSpace: 5,
     levels: [
       { level: 1, hp: 300,  dps: 11,  townHallRequired: 1 },
       { level: 2, hp: 360,  dps: 14,  townHallRequired: 1 },
@@ -110,6 +119,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground",
     preferredTarget: "Resources",
     attackSpeed: 1.0,
+    housingSpace: 1,
     levels: [
       { level: 1, hp: 25,  dps: 11,  townHallRequired: 1 },
       { level: 2, hp: 30,  dps: 14,  townHallRequired: 1 },
@@ -134,6 +144,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground",
     preferredTarget: "None",
     attackSpeed: 1.0,
+    housingSpace: 2,
     levels: [
       { level: 1, hp: 20,  dps: 12,  townHallRequired: 2 },
       { level: 2, hp: 24,  dps: 18,  townHallRequired: 3 },
@@ -155,9 +166,10 @@ export const TROOPS: Troop[] = [
     id: "balloon",
     name: "Balloon",
     movementSpeed: 10,
-    attackType: "Ground", // unité aérienne qui attaque les défenses au sol
+    attackType: "Ground",
     preferredTarget: "Defenses",
     attackSpeed: 3.0,
+    housingSpace: 5,
     levels: [
       { level: 1, hp: 150, dps: 25,  townHallRequired: 2  },
       { level: 2, hp: 180, dps: 32,  townHallRequired: 3  },
@@ -177,6 +189,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground & Air",
     preferredTarget: "None",
     attackSpeed: 1.4,
+    housingSpace: 4,
     levels: [
       { level: 1, hp: 75,  dps: 35,  townHallRequired: 4 },
       { level: 2, hp: 90,  dps: 50,  townHallRequired: 5 },
@@ -200,6 +213,7 @@ export const TROOPS: Troop[] = [
     attackType: "Air",
     preferredTarget: "None",
     attackSpeed: 0.7,
+    housingSpace: 14,
     levels: [
       { level: 1,  hp: 500,  dps: 0, hps: 36, townHallRequired: 6  },
       { level: 2,  hp: 700,  dps: 0, hps: 48, townHallRequired: 7  },
@@ -221,6 +235,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground & Air",
     preferredTarget: "None",
     attackSpeed: 1.25,
+    housingSpace: 20,
     splashRadius: 0.3,
     levels: [
       { level: 1, hp: 1900,  dps: 100, townHallRequired: 7 },
@@ -243,6 +258,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground",
     preferredTarget: "None",
     attackSpeed: 1.8,
+    housingSpace: 25,
     levels: [
       { level: 1, hp: 2500,  dps: 200, townHallRequired: 8 },
       { level: 2, hp: 2900,  dps: 240, townHallRequired: 8 },
@@ -263,6 +279,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground & Air",
     preferredTarget: "None",
     attackSpeed: 1.0,
+    housingSpace: 10,
     splashRadius: 0.3,
     levels: [
       { level: 1,  hp: 1200, dps: 75,  townHallRequired: 9  },
@@ -286,6 +303,7 @@ export const TROOPS: Troop[] = [
     attackType: "Ground",
     preferredTarget: "None",
     attackSpeed: 1.7,
+    housingSpace: 5,
     levels: [
       { level: 1,  hp: 550,  dps: 80,  townHallRequired: 10 },
       { level: 2,  hp: 610,  dps: 88,  townHallRequired: 10 },
@@ -304,6 +322,7 @@ export const TROOPS: Troop[] = [
   {
     id: "electro-dragon",
     name: "Electro Dragon",
+    housingSpace: 30,
     movementSpeed: 13,
     attackType: "Ground & Air",
     preferredTarget: "None",

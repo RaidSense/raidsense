@@ -91,6 +91,9 @@ const DEFENSE_FILL: Record<string, string> = {
   "monolith":        "#4c1d95",
   "builder-hut":     "#d97706",
   "bomb":            "#dc2626",
+  "spring-trap":     "#22c55e",
+  "giant-bomb":      "#b91c1c",
+  "air-bomb":        "#06b6d4",
 };
 
 const PALETTE_DEFAULTS: Record<string, number> = {
@@ -103,6 +106,9 @@ const PALETTE_DEFAULTS: Record<string, number> = {
   "monolith":     1,
   "builder-hut":  4,
   "bomb":         6,
+  "spring-trap":  6,
+  "giant-bomb":   9,
+  "air-bomb":     8,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -2507,6 +2513,77 @@ function BattleGrid({
                 fill="rgba(251,191,36,0.15)" stroke="#fbbf24" strokeWidth={1}
                 strokeOpacity={0.85} />
             </g>
+          );
+        })()}
+        {/* Giant-bomb ranges — trigger radius + explosion radius (per level) */}
+        {(() => {
+          const activeId = hoveredDefenseId ?? selectedId;
+          if (!activeId) return null;
+          const d = placed.find((p) => p.instanceId === activeId && p.defenseId === "giant-bomb");
+          if (!d) return null;
+          const defData   = DEFENSES.find((def) => def.id === "giant-bomb");
+          if (!defData) return null;
+          const levelData = defData.levels.find((l) => l.level === d.level);
+          const size      = defData.size ?? 2;
+          const cx        = (d.x + size / 2) * cellPx;
+          const cy        = (d.y + size / 2) * cellPx;
+          const triggerR  = (defData.triggerRadius ?? 3) * cellPx;
+          const explosionR = ((levelData?.explosionRadius ?? defData.explosionRadius) ?? 4) * cellPx;
+          return (
+            <g>
+              {/* Explosion radius */}
+              <circle cx={cx} cy={cy} r={explosionR}
+                fill="rgba(185,28,28,0.12)" stroke="#b91c1c" strokeWidth={1.5}
+                strokeOpacity={0.8} strokeDasharray="6 3" />
+              {/* Trigger radius */}
+              <circle cx={cx} cy={cy} r={triggerR}
+                fill="rgba(251,146,60,0.12)" stroke="#f97316" strokeWidth={1}
+                strokeOpacity={0.85} />
+            </g>
+          );
+        })()}
+        {/* Air-bomb ranges — trigger radius + explosion radius */}
+        {(() => {
+          const activeId = hoveredDefenseId ?? selectedId;
+          if (!activeId) return null;
+          const d = placed.find((p) => p.instanceId === activeId && p.defenseId === "air-bomb");
+          if (!d) return null;
+          const defData = DEFENSES.find((def) => def.id === "air-bomb");
+          if (!defData) return null;
+          const size      = defData.size ?? 1;
+          const cx        = (d.x + size / 2) * cellPx;
+          const cy        = (d.y + size / 2) * cellPx;
+          const triggerR  = (defData.triggerRadius   ?? 4) * cellPx;
+          const explosionR = (defData.explosionRadius ?? 3) * cellPx;
+          return (
+            <g>
+              {/* Explosion radius */}
+              <circle cx={cx} cy={cy} r={explosionR}
+                fill="rgba(6,182,212,0.12)" stroke="#06b6d4" strokeWidth={1.5}
+                strokeOpacity={0.8} strokeDasharray="5 3" />
+              {/* Trigger radius */}
+              <circle cx={cx} cy={cy} r={triggerR}
+                fill="rgba(125,211,252,0.10)" stroke="#7dd3fc" strokeWidth={1}
+                strokeOpacity={0.75} />
+            </g>
+          );
+        })()}
+        {/* Spring-trap trigger radius */}
+        {(() => {
+          const activeId = hoveredDefenseId ?? selectedId;
+          if (!activeId) return null;
+          const d = placed.find((p) => p.instanceId === activeId && p.defenseId === "spring-trap");
+          if (!d) return null;
+          const defData = DEFENSES.find((def) => def.id === "spring-trap");
+          if (!defData) return null;
+          const size = defData.size ?? 1;
+          const cx = (d.x + size / 2) * cellPx;
+          const cy = (d.y + size / 2) * cellPx;
+          const triggerR = (defData.triggerRadius ?? 1) * cellPx;
+          return (
+            <circle cx={cx} cy={cy} r={triggerR}
+              fill="rgba(34,197,94,0.15)" stroke="#22c55e" strokeWidth={1.5}
+              strokeOpacity={0.85} />
           );
         })()}
         {/* Air Sweeper cone — hover OR selection */}

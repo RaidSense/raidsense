@@ -16,8 +16,13 @@ export interface DefenseLevel {
   multiTargetCount?: number; // simultaneous targets (default 5 or 6)
   // ── Bomb Tower death explosion ────────────────────────────────────────────
   deathExplosionDamage?: number;
-  // ── Trap damage (bomb, etc.) ──────────────────────────────────────────────
+  // ── Trap damage + explosion radius (bomb / giant-bomb) ───────────────────
   trapDamage?: number;
+  /** Per-level explosion radius (giant-bomb). Falls back to defData.explosionRadius. */
+  explosionRadius?: number;
+  // ── Spring trap eject capacity ────────────────────────────────────────────
+  /** Max housing space a troop can have to be ejected. */
+  ejectCapacity?: number;
   // ── Air Sweeper pulse ─────────────────────────────────────────────────────
   pushStrength?: number;         // tiles pushed per pulse (air-sweeper only)
   // ── Monolith HP% bonus ────────────────────────────────────────────────────
@@ -60,6 +65,8 @@ export interface Defense {
   triggerDelay?: number;
   /** Only ground troops trigger and get hit by this trap. */
   targetsGroundOnly?: boolean;
+  /** Only air troops trigger and get hit by this trap. */
+  targetsAirOnly?: boolean;
   /**
    * Proximity radius (tiles) that triggers activation from hidden state.
    * Only used by Hidden Tesla. Undefined / 0 = always active (normal defenses).
@@ -422,6 +429,94 @@ export const DEFENSES: Defense[] = [
       { level: 12, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 170 },
       { level: 13, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 185 },
       { level: 14, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 200 },
+    ],
+  },
+  {
+    id: "spring-trap",
+    name: "Piège à ressort",
+    targetType: "Ground",
+    size: 1,
+    attackSpeed: 1,
+    category: "trap",
+    isTrap: true,
+    singleUse: true,
+    hidden: true,
+    triggerRadius: 1,
+    targetsGroundOnly: true,
+    notes: "Piège à usage unique. Éjecte instantanément les troupes au sol dont le housing ≤ ejectCapacity. Consommé après activation même si la troupe est immunisée.",
+    levels: [
+      { level:  1, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  4, ejectCapacity: 10 },
+      { level:  2, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  4, ejectCapacity: 12 },
+      { level:  3, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  6, ejectCapacity: 14 },
+      { level:  4, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  6, ejectCapacity: 16 },
+      { level:  5, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  8, ejectCapacity: 18 },
+      { level:  6, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  8, ejectCapacity: 18 },
+      { level:  7, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  8, ejectCapacity: 18 },
+      { level:  8, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  8, ejectCapacity: 18 },
+      { level:  9, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 12, ejectCapacity: 18 },
+      { level: 10, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 12, ejectCapacity: 18 },
+      { level: 11, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, ejectCapacity: 18 },
+      { level: 12, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, ejectCapacity: 18 },
+      { level: 13, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, ejectCapacity: 18 },
+    ],
+  },
+  {
+    id: "giant-bomb",
+    name: "Bombe géante",
+    targetType: "Ground",
+    size: 2,
+    attackSpeed: 1,
+    category: "trap",
+    isTrap: true,
+    singleUse: true,
+    hidden: true,
+    triggerRadius: 3,
+    triggerDelay: 0,
+    targetsGroundOnly: true,
+    notes: "Piège à usage unique. Invisible. Déclenché par une troupe au sol dans rayon 3. Explosion immédiate dans un grand rayon.",
+    levels: [
+      { level:  1, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  6, trapDamage: 175, explosionRadius: 3   },
+      { level:  2, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  6, trapDamage: 200, explosionRadius: 3.5 },
+      { level:  3, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  8, trapDamage: 225, explosionRadius: 3.5 },
+      { level:  4, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 10, trapDamage: 250, explosionRadius: 4   },
+      { level:  5, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 11, trapDamage: 275, explosionRadius: 4   },
+      { level:  6, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 325, explosionRadius: 4   },
+      { level:  7, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 375, explosionRadius: 4   },
+      { level:  8, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 14, trapDamage: 400, explosionRadius: 4   },
+      { level:  9, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 15, trapDamage: 425, explosionRadius: 4   },
+      { level: 10, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 16, trapDamage: 450, explosionRadius: 4   },
+      { level: 11, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 17, trapDamage: 475, explosionRadius: 4   },
+    ],
+  },
+  {
+    id: "air-bomb",
+    name: "Bombe aérienne",
+    targetType: "Air",
+    size: 1,
+    attackSpeed: 1,
+    category: "trap",
+    isTrap: true,
+    singleUse: true,
+    hidden: true,
+    triggerRadius: 4,
+    explosionRadius: 3,
+    triggerDelay: 0.3,
+    targetsAirOnly: true,
+    notes: "Piège à usage unique. Invisible. Déclenché par une troupe aérienne dans rayon 4. Explose après 0.3s dans rayon 3.",
+    levels: [
+      { level:  1, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  5, trapDamage: 100 },
+      { level:  2, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  5, trapDamage: 120 },
+      { level:  3, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  7, trapDamage: 144 },
+      { level:  4, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired:  9, trapDamage: 173 },
+      { level:  5, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 11, trapDamage: 208 },
+      { level:  6, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 12, trapDamage: 232 },
+      { level:  7, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 252 },
+      { level:  8, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 13, trapDamage: 280 },
+      { level:  9, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 14, trapDamage: 325 },
+      { level: 10, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 15, trapDamage: 350 },
+      { level: 11, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 16, trapDamage: 375 },
+      { level: 12, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 17, trapDamage: 400 },
+      { level: 13, hp: 1, dps: 0, minRange: 0, maxRange: 0, townHallRequired: 18, trapDamage: 425 },
     ],
   },
 ];

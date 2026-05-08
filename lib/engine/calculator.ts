@@ -335,6 +335,7 @@ interface TroopState {
   // ── TH death-zone debuffs ────────────────────────────────────────────────
   speedMultiplier:  number;   // 1.0 = normal; reduced by TH slow zones
   attackMultiplier: number;   // 1.0 = normal; reduced by TH slow zones
+  housingSpace:     number;   // space occupied in army camp (used by spring-trap)
 }
 
 interface DefenseState {
@@ -390,16 +391,18 @@ interface DefenseState {
   deathExplosionDamage:    number;
   deathExplosionRadius:    number;
   deathExplosionTriggered: boolean;
-  // ── Trap (bomb) ────────────────────────────────────────────────────────────
+  // ── Trap (bomb / spring-trap) ─────────────────────────────────────────────
   isTrap:            boolean;
   triggerRadius:     number;
   explosionRadius:   number;
   triggerDelay:      number;
   trapDamage:        number;
   targetsGroundOnly: boolean;
+  targetsAirOnly:    boolean;
   isTriggered:       boolean;   // troop entered triggerRadius
   triggerAt:         number;    // simTime of explosion (-1 = not triggered)
-  consumed:          boolean;   // true after explosion
+  consumed:          boolean;   // true after activation
+  ejectCapacity:     number;    // spring-trap: max housing space ejectable (0 for other traps)
 }
 
 interface WallState {
@@ -587,6 +590,7 @@ export function simulateAttack(
       isActive:  (dep.deployAt ?? 0) <= 0,
       speedMultiplier:  1,
       attackMultiplier: 1,
+      housingSpace:     troopData.housingSpace ?? 1,
     });
   }
 
@@ -652,13 +656,15 @@ export function simulateAttack(
       repairPerSecond: levelData.repairPerSecond ?? 0,
       isTrap:            !!defData.isTrap,
       triggerRadius:     defData.triggerRadius    ?? 0,
-      explosionRadius:   defData.explosionRadius  ?? 0,
+      explosionRadius:   levelData.explosionRadius ?? defData.explosionRadius ?? 0,
       triggerDelay:      defData.triggerDelay     ?? 0,
       trapDamage:        levelData.trapDamage     ?? 0,
       targetsGroundOnly: !!defData.targetsGroundOnly,
-      isTriggered: false,
-      triggerAt:   -1,
-      consumed:    false,
+      targetsAirOnly:    !!defData.targetsAirOnly,
+      isTriggered:   false,
+      triggerAt:     -1,
+      consumed:      false,
+      ejectCapacity: levelData.ejectCapacity ?? 0,
       pulseInterval:  defData.pulseInterval ?? 0,
       pulseCooldown:  defData.pulseInterval ?? 0,   // first pulse at t = pulseInterval
       coneAngle:      (defData.coneAngle ?? 0) / 2 * (Math.PI / 180), // store half-cone in radians
@@ -1051,22 +1057,43 @@ export function simulateAttack(
         for (const t of troops.values()) {
           if (!t.alive || !t.isActive || t.isUnderground) continue;
           if (def.targetsGroundOnly && t.isAirUnit) continue;
+          if (def.targetsAirOnly   && !t.isAirUnit) continue;
           const dist = euclidean(def.position, { x: t.position.x + 0.5, y: t.position.y + 0.5 });
           if (dist <= def.triggerRadius) {
-            def.isTriggered = true;
-            def.triggerAt   = simTime + def.triggerDelay;
-            if (DEBUG) console.log(`[BOMB_TRIGGER t=${simTime.toFixed(1)}s] ${def.instanceId} → ${t.instanceId}`);
+            if (def.defenseId === "spring-trap") {
+              // Spring-trap: consumed immediately on first troop contact
+              def.consumed    = true;
+              def.alive       = false;
+              def.destroyedAt = simTime;
+              if (DEBUG) console.log(`[SPRING_TRIGGER t=${simTime.toFixed(1)}s] ${def.instanceId} → ${t.instanceId} housing=${t.housingSpace} cap=${def.ejectCapacity}`);
+              if (t.housingSpace <= def.ejectCapacity) {
+                t.hp = 0; t.alive = false; t.destroyedAt = simTime;
+                if (DEBUG) console.log(`[SPRING_EJECT t=${simTime.toFixed(1)}s] ${t.instanceId} removed`);
+              } else {
+                if (DEBUG) console.log(`[SPRING_IMMUNE t=${simTime.toFixed(1)}s] ${t.instanceId} housing=${t.housingSpace} > cap=${def.ejectCapacity}`);
+              }
+            } else {
+              def.isTriggered = true;
+              def.triggerAt   = simTime + def.triggerDelay;
+              if (DEBUG) {
+                const trapLabel = def.defenseId === "giant-bomb" ? "GIANT_BOMB"
+                                : def.defenseId === "air-bomb"   ? "AIR_BOMB"
+                                : "BOMB";
+                console.log(`[${trapLabel}_TRIGGER t=${simTime.toFixed(1)}s] ${def.instanceId} → ${t.instanceId}`);
+              }
+            }
             break;
           }
         }
       }
 
-      // Explosion check
-      if (def.isTriggered && simTime >= def.triggerAt) {
+      // Explosion check (bomb only — spring-trap is instant in trigger block)
+      if (def.isTriggered && !def.consumed && simTime >= def.triggerAt) {
         let hits = 0;
         for (const t of troops.values()) {
           if (!t.alive || !t.isActive) continue;
-          if (def.targetsGroundOnly && t.isAirUnit) continue;
+          if (def.targetsGroundOnly && t.isAirUnit)  continue;
+          if (def.targetsAirOnly    && !t.isAirUnit) continue;
           const dist = euclidean(def.position, { x: t.position.x + 0.5, y: t.position.y + 0.5 });
           if (dist <= def.explosionRadius) {
             const actual = Math.min(def.trapDamage, t.hp);
@@ -1079,7 +1106,12 @@ export function simulateAttack(
         def.consumed    = true;
         def.alive       = false;
         def.destroyedAt = simTime;
-        if (DEBUG) console.log(`[BOMB_EXPLODE t=${simTime.toFixed(1)}s] ${def.instanceId} dmg=${def.trapDamage} hits=${hits}`);
+        if (DEBUG) {
+          const trapLabel = def.defenseId === "giant-bomb" ? "GIANT_BOMB"
+                          : def.defenseId === "air-bomb"   ? "AIR_BOMB"
+                          : "BOMB";
+          console.log(`[${trapLabel}_EXPLODE t=${simTime.toFixed(1)}s] ${def.instanceId} dmg=${def.trapDamage} hits=${hits}`);
+        }
       }
     }
 
