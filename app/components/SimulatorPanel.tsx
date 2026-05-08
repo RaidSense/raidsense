@@ -6,6 +6,9 @@ import { type WallPlacement, WALL_HP, MAX_WALL_LEVEL } from "../../lib/data/wall
 import { BASE_PRESETS, type BasePreset } from "../../lib/data/base-presets";
 import { TOWN_HALL_DATA } from "../../lib/data/town-halls";
 import {
+  getDefenseLimit, getTotalDefenseLimit, TH_DEFENSE_LIMITS,
+} from "../../lib/data/townhall-limits";
+import {
   buildOccupation, isFree, inBounds, entitySize, occupantsOf, occupiedSnapshot,
   type OccupationMap,
 } from "../../lib/data/grid-occupation";
@@ -580,6 +583,9 @@ export default function SimulatorPanel() {
   const [showRanges,      setShowRanges]      = useState<boolean>(false);
   const [showHeatmap,     setShowHeatmap]     = useState<boolean>(false);
   const [debugMode,       setDebugMode]       = useState<boolean>(false);
+  const [selectedTH,      setSelectedTH]      = useState<number>(15);
+  const [placementError,  setPlacementError]  = useState<string | null>(null);
+  const placementErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Optimizer
   const [isOptimizing,       setIsOptimizing]       = useState<boolean>(false);
   const [optIterations,      setOptIterations]      = useState<number>(50);
@@ -988,6 +994,12 @@ export default function SimulatorPanel() {
     setShowReplay(false); setReplayPlaying(false); setReplayTime(0);
   }
 
+  function showError(msg: string) {
+    setPlacementError(msg);
+    if (placementErrorTimer.current) clearTimeout(placementErrorTimer.current);
+    placementErrorTimer.current = setTimeout(() => setPlacementError(null), 3000);
+  }
+
   // Single source of truth for occupied tiles — rebuilt on every layout change.
   const occupation = useMemo(
     () => buildOccupation(placed, placedBuildings, placedWalls),
@@ -1119,7 +1131,20 @@ export default function SimulatorPanel() {
   function handlePlace(x: number, y: number, defenseId: string, level: number) {
     const size = entitySize(defenseId);
     if (!inBounds(x, y, size) || !isFree(occupation, x, y, size)) return;
-    if (placed.length >= MAX_DEFENSES) return;
+    if (placed.length >= getTotalDefenseLimit(selectedTH)) return;
+    // TH-level limit check
+    const limit   = getDefenseLimit(selectedTH, defenseId);
+    const current = placed.filter((d) => d.defenseId === defenseId).length;
+    if (limit === 0) {
+      const name = DEFENSES.find((d) => d.id === defenseId)?.name ?? defenseId;
+      showError(`${name} non disponible au HDV ${selectedTH}`);
+      return;
+    }
+    if (current >= limit) {
+      const name = DEFENSES.find((d) => d.id === defenseId)?.name ?? defenseId;
+      showError(`Limite atteinte : ${current}/${limit} ${name} pour HDV ${selectedTH}`);
+      return;
+    }
     const defaultMode =
       defenseId === "inferno-tower" ? "multi" :
       defenseId === "x-bow"         ? "ground" : undefined;
@@ -1436,17 +1461,45 @@ export default function SimulatorPanel() {
         {/* Sidebar */}
         <div className="flex-1 space-y-4" style={{ minWidth: 300 }}>
 
+          {/* HDV selector */}
+          <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-300">Niveau HDV actif</h2>
+              <span className="text-xs text-slate-500">{placed.length}/{getTotalDefenseLimit(selectedTH)} défenses</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {Array.from({ length: 15 }, (_, i) => i + 1).map((lv) => (
+                <button
+                  key={lv}
+                  onClick={() => { setSelectedTH(lv); setPlacementError(null); }}
+                  className={`w-8 h-7 rounded text-xs font-bold transition-colors border ${
+                    selectedTH === lv
+                      ? "border-cyan-400/70 bg-cyan-500/20 text-cyan-200"
+                      : "border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500"
+                  }`}
+                >{lv}</button>
+              ))}
+            </div>
+            {/* Error message */}
+            {placementError && (
+              <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1">
+                ✕ {placementError}
+              </p>
+            )}
+          </section>
+
           {/* Defense palette */}
           <section className="rounded-2xl border border-[#141a30] bg-[#06080f] p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-slate-100">Défenses</h2>
-              <span className="text-xs text-slate-500">{placed.length}/{MAX_DEFENSES} sur la grille</span>
-            </div>
+            <h2 className="text-base font-semibold text-slate-100">Défenses</h2>
             <DefensePalette
               palLevels={palLevels}
               onLevelChange={(id, lv) => setPalLevels((p) => ({ ...p, [id]: lv }))}
               cellSize={cellSize}
               onDragItemStart={(sz) => setDragItemSize(sz)}
+              placedCounts={Object.fromEntries(
+                DEFENSES.map((d) => [d.id, placed.filter((p) => p.defenseId === d.id).length])
+              )}
+              thLimits={TH_DEFENSE_LIMITS[selectedTH] as Record<string, number> ?? {}}
             />
           </section>
 
@@ -3026,23 +3079,33 @@ function DefensePalette({
   onLevelChange,
   cellSize,
   onDragItemStart,
+  placedCounts = {},
+  thLimits = {},
 }: {
   palLevels: Record<string, number>;
   onLevelChange: (id: string, level: number) => void;
   cellSize: number;
   onDragItemStart?: (size: number) => void;
+  placedCounts?: Record<string, number>;
+  thLimits?: Record<string, number>;
 }) {
   return (
     <div className="space-y-1.5">
       {DEFENSES.map((def) => {
-        const level = palLevels[def.id] ?? 1;
-        const fill  = DEFENSE_FILL[def.id] ?? "#ef4444";
+        const level     = palLevels[def.id] ?? 1;
+        const fill      = DEFENSE_FILL[def.id] ?? "#ef4444";
+        const limit     = thLimits[def.id] ?? 0;
+        const placed    = placedCounts[def.id] ?? 0;
+        const atLimit   = limit > 0 && placed >= limit;
+        const unavail   = limit === 0;
+        const disabled  = atLimit || unavail;
 
         return (
           <div
             key={def.id}
-            draggable
+            draggable={!disabled}
             onDragStart={(e) => {
+              if (disabled) { e.preventDefault(); return; }
               e.dataTransfer.setData(
                 "text/plain",
                 JSON.stringify({ defenseId: def.id, level })
@@ -3070,15 +3133,31 @@ function DefensePalette({
               // Le navigateur prend un snapshot synchrone ; on peut retirer
               setTimeout(() => document.body.removeChild(ghost), 0);
             }}
-            className="flex items-center gap-2.5 rounded-lg border border-[#1e2a45] bg-[#0d1020] px-3 py-2 cursor-grab active:cursor-grabbing hover:border-slate-500 transition-colors select-none"
+            className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 transition-colors select-none ${
+              disabled
+                ? "border-slate-800 bg-[#080a10] cursor-not-allowed opacity-50"
+                : "border-[#1e2a45] bg-[#0d1020] cursor-grab active:cursor-grabbing hover:border-slate-500"
+            }`}
           >
             {/* Color swatch */}
-            <div className="flex-shrink-0 rounded-sm" style={{ width: 10, height: 10, backgroundColor: fill }} />
+            <div className="flex-shrink-0 rounded-sm" style={{ width: 10, height: 10, backgroundColor: disabled ? "#555" : fill }} />
 
             {/* Name */}
-            <span className="flex-1 text-xs font-medium text-slate-200 truncate">
+            <span className={`flex-1 text-xs font-medium truncate ${disabled ? "text-slate-500" : "text-slate-200"}`}>
               {def.name}
             </span>
+
+            {/* TH count/limit badge */}
+            {limit > 0 && (
+              <span className={`text-xs font-mono flex-shrink-0 ${
+                atLimit ? "text-red-400" : placed > 0 ? "text-amber-400" : "text-slate-500"
+              }`}>
+                {placed}/{limit}
+              </span>
+            )}
+            {unavail && (
+              <span className="text-xs text-slate-600 flex-shrink-0">—</span>
+            )}
 
             {/* Level selector — stops propagation to prevent interfering with drag */}
             <div

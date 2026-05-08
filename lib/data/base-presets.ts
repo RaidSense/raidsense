@@ -3,6 +3,7 @@
  * All coordinates are top-left of the footprint on the 44×44 grid.
  */
 import { type WallPlacement } from "./walls";
+import { validateDefensesForTH } from "./townhall-limits";
 import {
   buildOccupation, isFree, inBounds, entitySize, occupyTiles,
   type OccupationMap,
@@ -262,6 +263,12 @@ export function validatePresetStrict(preset: BasePreset): PresetError[] {
     if (existing)
       errors.push({ type: "wall-on-entity",
         message: `Mur sur entité: (${w.x},${w.y}) ↔ ${existing.entityId} [${existing.kind}]` });
+  }
+
+  // ── 4. TH15 limit check (warn only — presets have no TH selector) ─────────
+  for (const v of validateDefensesForTH(preset.defenses, 15)) {
+    errors.push({ type: "overlap",
+      message: `Limite HDV15 dépassée: ${v.defenseId} — ${v.placed} placés, max=${v.limit}` });
   }
 
   return errors;
