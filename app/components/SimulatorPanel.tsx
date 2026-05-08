@@ -2102,7 +2102,9 @@ function BattleGrid({
 
   function onDragOver(e: React.DragEvent) {
     e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
+    // Distinguish move (existing entity) from copy (new from palette)
+    const isMove = e.dataTransfer.types.includes("application/x-entity-move");
+    e.dataTransfer.dropEffect = isMove ? "move" : "copy";
     const c = cellAt(e);
     if (c) setDragCell((p) => { const k = `${c.x},${c.y}`; return p === k ? p : k; });
   }
@@ -2300,6 +2302,7 @@ function BattleGrid({
     setDragEntityId(d.instanceId);
     onDragEntityStart?.(size);
     e.dataTransfer.setData("text/plain", JSON.stringify({ existingInstanceId: d.instanceId, defenseId: d.defenseId, level: d.level, mode: d.mode }));
+    e.dataTransfer.setData("application/x-entity-move", "1");
     e.dataTransfer.effectAllowed = "move";
     const fill   = DEFENSE_FILL[d.defenseId] ?? "#ef4444";
     const tilePx = Math.round(cellPx * size);
@@ -2329,6 +2332,7 @@ function BattleGrid({
           setDragEntityId(b.instanceId);
           onDragEntityStart?.(size);
           e.dataTransfer.setData("text/plain", JSON.stringify({ existingBuildingInstanceId: b.instanceId, buildingId: b.buildingId, level: b.level }));
+          e.dataTransfer.setData("application/x-entity-move", "1");
           e.dataTransfer.effectAllowed = "move";
           const tilePx = Math.round(cellPx * size);
           const ghost = document.createElement("div");
