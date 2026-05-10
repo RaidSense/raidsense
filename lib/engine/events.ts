@@ -29,6 +29,8 @@ export type SimEventType =
   | "REPAIR"                // builder hut heals something
   | "DEFENSE_DESTROYED"     // defense HP reaches 0
   | "BUILDING_DESTROYED"    // neutral building HP reaches 0
+  | "WALL_TARGETED"         // troop locks onto a wall to break it
+  | "WALL_DAMAGED"          // troop deals damage to a wall
   | "WALL_DESTROYED"        // wall HP reaches 0
   // Pathfinding
   | "PATH_DECISION"         // troop decided DIRECT or BREAK_WALL

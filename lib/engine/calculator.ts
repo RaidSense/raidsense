@@ -83,6 +83,8 @@ const TROOP_ATTACK_RANGE: Record<string, number> = {
   "baby-dragon":    2.75,
   "miner":          0.5,
   "electro-dragon": 3,
+  // ── Heroes ────────────────────────────────────────────────────────────────
+  "archer-queen":   5.0,   // 5-tile ranged attack
 };
 
 // ---------------------------------------------------------------------------
@@ -417,13 +419,14 @@ interface DefenseState {
 }
 
 interface WallState {
-  instanceId:  string;
-  x:           number;
-  y:           number;
-  hp:          number;
-  alive:       boolean;
-  destroyedAt: number | null;
-  hpHistory:   number[];
+  instanceId:          string;
+  x:                   number;
+  y:                   number;
+  hp:                  number;
+  alive:               boolean;
+  destroyedAt:         number | null;
+  hpHistory:           number[];
+  totalDamageReceived: number;
 }
 
 interface BuildingState {
@@ -736,7 +739,7 @@ export function simulateAttack(
     walls.set(wp.instanceId, {
       instanceId: wp.instanceId,
       x: wp.x, y: wp.y,
-      hp, alive: true, destroyedAt: null, hpHistory: [],
+      hp, alive: true, destroyedAt: null, hpHistory: [], totalDamageReceived: 0,
     });
   }
 
@@ -1719,9 +1722,21 @@ export function simulateAttack(
                 const effDps = isEnragedBD ? troop.dps * 2 : troop.dps;
                 const actual = Math.min(effDps * effAS, wall.hp);
                 wall.hp -= actual;
+                wall.totalDamageReceived += actual;
+                pushEvent({
+                  time: simTime, type: "WALL_DAMAGED",
+                  sourceId: troop.instanceId, targetId: wall.instanceId,
+                  value: actual,
+                  extra: { troopType: troop.troopId, remainingHp: wall.hp, totalDamageReceived: wall.totalDamageReceived },
+                });
                 if (wall.hp <= 0 && wall.alive) {
                   wall.hp = 0; wall.alive = false; wall.destroyedAt = simTime;
                   wallVersion++;
+                  pushEvent({
+                    time: simTime, type: "WALL_DESTROYED",
+                    sourceId: troop.instanceId, targetId: wall.instanceId,
+                    extra: { troopType: troop.troopId, totalDamageReceived: wall.totalDamageReceived },
+                  });
                 }
                 troop.attackCooldown = effAS;
               }
@@ -1759,9 +1774,10 @@ export function simulateAttack(
 
           // Global path cache keyed by position + target + wallVersion
           const cacheKey = `${fromTile.x},${fromTile.y}|${troop.targetId}|${wallVersion}`;
+          const blockedSet = buildBlockedSet();
           let result = pathCache.get(cacheKey);
           if (result === undefined) {
-            result = dijkstraPath(fromTile, goalTiles, buildBlockedSet(), GRID_SIZE);
+            result = dijkstraPath(fromTile, goalTiles, blockedSet, GRID_SIZE);
             pathCache.set(cacheKey, result);
           }
 
@@ -1782,17 +1798,38 @@ export function simulateAttack(
             directDist,
             DETOUR_RATIO,
             wallInfos,
+            { fromTile, goalTiles, blocked: blockedSet, gridSize: GRID_SIZE },
           );
 
           // Emit PATH_DECISION event only when decision changes (avoids flood)
           if (troop.lastPathDecision?.mode !== decision.mode ||
               troop.lastPathDecision?.targetWallId !== decision.targetWallId) {
             troop.lastPathDecision = decision;
-            pushEvent({ time: simTime, type: "PATH_DECISION", sourceId: troop.instanceId,
+            const selEval = decision.debugInfo?.find(e => e.wallId === decision.targetWallId);
+            pushEvent({
+              time: simTime, type: "PATH_DECISION", sourceId: troop.instanceId,
               targetId: decision.targetWallId,
               value:    Math.round(decision.estimatedCost * 10) / 10,
-              extra:    { mode: decision.mode, troopId: troop.troopId } });
-            if (DEBUG) console.log(`[PATH_DECISION] ${troop.instanceId} ${decision.mode}${decision.targetWallId ? " " + decision.targetWallId : ""} cost=${decision.estimatedCost.toFixed(1)}`);
+              extra: {
+                mode:      decision.mode,
+                troopId:   troop.troopId,
+                wallScore: selEval ? Math.round(selEval.score * 10) / 10         : undefined,
+                wallGain:  selEval ? Math.round(selEval.distanceGain * 10) / 10  : undefined,
+                wallsNear: selEval?.wallsNearPath,
+                reason:    selEval?.reason,
+              },
+            });
+            if (DEBUG) {
+              console.log(`[PATH_DECISION] ${troop.instanceId} ${decision.mode}${decision.targetWallId ? " wall=" + decision.targetWallId : ""} cost=${decision.estimatedCost.toFixed(1)}`);
+              if (decision.debugInfo) {
+                for (const ev of decision.debugInfo) {
+                  if (!isFinite(ev.score) && !ev.scoreTwoWall) continue;
+                  const s1  = isFinite(ev.score) ? ev.score.toFixed(1) : "∞";
+                  const s2  = ev.scoreTwoWall !== undefined ? ` look→${ev.bestSecondWallId} s2=${ev.scoreTwoWall.toFixed(1)}` : "";
+                  console.log(`  [WALL_EVAL] ${ev.wallId} score=${s1}${s2} gain=${isFinite(ev.distanceGain) ? ev.distanceGain.toFixed(1) : "∞"}s nearWalls=${ev.wallsNearPath}${ev.reason ? " ("+ev.reason+")" : ""}`);
+                }
+              }
+            }
           }
 
           if (decision.mode === "DIRECT" && result !== null) {
@@ -1805,6 +1842,7 @@ export function simulateAttack(
             troop.wallAttackId        = decision.targetWallId;
             troop.wallAttackLockTimer = WALL_LOCK_TICKS;
             troop.bfsPath = [];
+            pushEvent({ time: simTime, type: "WALL_TARGETED", sourceId: troop.instanceId, targetId: decision.targetWallId, extra: { troopType: troop.troopId } });
           } else {
             // Fallback: straight movement (no walls or no path found)
             troop.wallAttackId = null;
@@ -2024,8 +2062,7 @@ export function simulateAttack(
     // Consumed traps don't count as "alive targets" for termination.
     const allTargetsDown      = [...defenses.values()].filter(d => !d.isTrap).every(d => !d.alive)
                              && [...defenses.values()].filter(d => d.isTrap && !d.consumed && d.alive).length === 0
-                             && [...buildings.values()].every((b) => !b.alive)
-                             && [...walls.values()].every((w) => !w.alive);
+                             && [...buildings.values()].every((b) => !b.alive);
     if ((allTroopsDead && !hasPendingLightning) || allTargetsDown) break;
   }
 
