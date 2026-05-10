@@ -2,6 +2,11 @@
 
 import { useState, useRef, useMemo, useEffect } from "react";
 import { TROOPS } from "../../lib/data/troops";
+import { HEROES } from "../../lib/data/heroes";
+
+/** Cherche une unité (troupe ou héros) par son id. */
+const ALL_UNITS = [...TROOPS, ...HEROES] as const;
+function findUnit(id: string) { return ALL_UNITS.find((u) => u.id === id); }
 import { type WallPlacement, WALL_HP, MAX_WALL_LEVEL } from "../../lib/data/walls";
 import { BASE_PRESETS, type BasePreset } from "../../lib/data/base-presets";
 import { TOWN_HALL_DATA } from "../../lib/data/town-halls";
@@ -198,7 +203,7 @@ function buildDeployments(slots: TroopSlot[]): {
   let pi = 0;
 
   slots.forEach((slot, si) => {
-    const troop = TROOPS.find((t) => t.id === slot.troopId)!;
+    const troop = findUnit(slot.troopId)!;
     const lData = troop.levels.find((l) => l.level === slot.level)!;
     const abbr  = TROOP_ABBREV[slot.troopId] ?? troop.name.slice(0, 2);
     const color    = TROOP_COLORS[si % TROOP_COLORS.length];
@@ -233,7 +238,7 @@ function buildManualDeployments(
   const deployments: TroopDeployment[] = [];
   const meta: TroopMeta[]              = [];
   for (const pt of placedTroops) {
-    const troop = TROOPS.find((t) => t.id === pt.troopId);
+    const troop = findUnit(pt.troopId);
     if (!troop) continue;
     const lData = troop.levels.find((l) => l.level === pt.level);
     if (!lData) continue;
@@ -1131,7 +1136,7 @@ export default function SimulatorPanel() {
       if (s.slotId !== slotId) return s;
       const next = { ...s, ...patch };
       if (patch.troopId && patch.troopId !== s.troopId) {
-        const t = TROOPS.find((t) => t.id === patch.troopId)!;
+        const t = findUnit(patch.troopId)!;
         next.level = Math.min(s.level, t.levels.length);
       }
       return next;
@@ -3508,7 +3513,7 @@ function TroopPlacementPanel({
         <p className="text-xs text-slate-500">Sélectionner le type à poser :</p>
         <div className="flex flex-wrap gap-1.5">
           {slots.map((slot, idx) => {
-            const troop = TROOPS.find((t) => t.id === slot.troopId)!;
+            const troop = findUnit(slot.troopId)!;
             const abbr  = TROOP_ABBREV[slot.troopId] ?? troop.name.slice(0, 2);
             const color = TROOP_COLORS[idx % TROOP_COLORS.length];
             const sel   = selectedSlotId === slot.slotId;
@@ -3539,7 +3544,7 @@ function TroopPlacementPanel({
           <p className="text-xs text-slate-500">Troupes placées ({placedTroops.length}) :</p>
           <div className="max-h-40 overflow-y-auto space-y-1">
             {placedTroops.map((pt) => {
-              const troop = TROOPS.find((t) => t.id === pt.troopId)!;
+              const troop = findUnit(pt.troopId)!;
               const abbr  = TROOP_ABBREV[pt.troopId] ?? troop.name.slice(0, 2);
               const slotIdx = slots.findIndex((s) => s.troopId === pt.troopId);
               const color = TROOP_COLORS[Math.max(0, slotIdx) % TROOP_COLORS.length];
@@ -3761,7 +3766,7 @@ function TroopComposer({
   return (
     <div className="space-y-3">
       {slots.map((slot, idx) => {
-        const troop = TROOPS.find((t) => t.id === slot.troopId)!;
+        const troop = findUnit(slot.troopId)!;
         const lData = troop.levels.find((l) => l.level === slot.level)!;
         const color = TROOP_COLORS[idx % TROOP_COLORS.length];
 
@@ -3772,7 +3777,12 @@ function TroopComposer({
             <div className="grid flex-1 grid-cols-3 gap-2 sm:grid-cols-[2fr_1fr_1fr_auto]">
               <Field label="Troupe">
                 <Select value={slot.troopId} onChange={(e) => onUpdate(slot.slotId, { troopId: e.target.value })}>
-                  {TROOPS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  <optgroup label="Troupes">
+                    {TROOPS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </optgroup>
+                  <optgroup label="Héros">
+                    {HEROES.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+                  </optgroup>
                 </Select>
               </Field>
               <Field label={`Niv. (max ${troop.levels.length})`}>
