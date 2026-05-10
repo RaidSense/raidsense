@@ -1,4 +1,5 @@
 import { getTroopById } from "../data/troops";
+import { getHeroById } from "../data/heroes";
 import { getDefenseById, type TargetType } from "../data/defenses";
 import { getNeutralBuildingById } from "../data/neutral-buildings";
 import { type WallPlacement, WALL_HP } from "../data/walls";
@@ -553,7 +554,7 @@ export function simulateAttack(
   const troops = new Map<string, TroopState>();
 
   for (const dep of deployments) {
-    const troopData = getTroopById(dep.troopId);
+    const troopData = getTroopById(dep.troopId) ?? getHeroById(dep.troopId);
     if (!troopData) throw new Error(`Unknown troop id: "${dep.troopId}"`);
 
     const levelData = troopData.levels.find((l) => l.level === dep.level);

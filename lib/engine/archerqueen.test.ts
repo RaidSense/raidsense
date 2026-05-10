@@ -11,7 +11,7 @@
  *   - Intégration moteur : la Reine attaque et détruit une défense
  */
 
-import { getTroopById, getTroopLevel } from "../data/troops";
+import { getHeroById, getHeroLevel } from "../data/heroes";
 import { simulateAttack } from "./calculator";
 import type { TroopDeployment, DefensePlacement } from "./calculator";
 
@@ -30,7 +30,7 @@ function assert(condition: boolean, label: string, detail = "") {
 
 // ── Données de référence ─────────────────────────────────────────────────────
 
-const queen = getTroopById("archer-queen");
+const queen = getHeroById("archer-queen");
 
 // ── Test 1 : données chargées ────────────────────────────────────────────────
 console.log("\nTest 1: Reine des Archers chargée depuis troops.ts");
@@ -48,7 +48,7 @@ console.log("\nTest 1: Reine des Archers chargée depuis troops.ts");
 // ── Test 2 : stats niveau 90 ─────────────────────────────────────────────────
 console.log("\nTest 2: Stats niveau 90 — DPS=748, HP=3096, régénération=385min");
 {
-  const lv90 = getTroopLevel("archer-queen", 90);
+  const lv90 = getHeroLevel("archer-queen", 90);
   assert(lv90 !== undefined, "niveau 90 existe");
   assert(lv90?.dps === 748, `dps lv90 = 748 (got ${lv90?.dps})`);
   assert(lv90?.hp  === 3096, `hp lv90 = 3096 (got ${lv90?.hp})`);
@@ -60,7 +60,7 @@ console.log("\nTest 2: Stats niveau 90 — DPS=748, HP=3096, régénération=385
 // ── Test 3 : stats niveau 1 ──────────────────────────────────────────────────
 console.log("\nTest 3: Stats niveau 1 — DPS=136, HP=580, HDV requis=8");
 {
-  const lv1 = getTroopLevel("archer-queen", 1);
+  const lv1 = getHeroLevel("archer-queen", 1);
   assert(lv1?.dps === 136, `dps lv1 = 136 (got ${lv1?.dps})`);
   assert(lv1?.hp  === 580,  `hp lv1 = 580 (got ${lv1?.hp})`);
   assert(lv1?.townHallRequired === 8, `townHallRequired lv1 = 8 (got ${lv1?.townHallRequired})`);
