@@ -20,6 +20,7 @@ import {
 import { DEFENSES } from "../../lib/data/defenses";
 import { NEUTRAL_BUILDINGS } from "../../lib/data/neutral-buildings";
 import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
+import { RAGE_SPELL, FREEZE_SPELL, type SpellPlacement } from "../../lib/data/spells";
 import type { SimEvent } from "../../lib/engine/events";
 import {
   createBestDeployment,
@@ -137,6 +138,15 @@ interface PlacedTroop {
   x:          number; // tile
   y:          number;
   deployAt:   number; // seconds delay before entering battle (0 = immediate)
+}
+
+interface PlacedSpell {
+  instanceId: string;
+  spellId:    "rage" | "freeze";
+  level:      number;
+  x:          number;
+  y:          number;
+  deployAt:   number;
 }
 
 interface PlacedDefense {
@@ -591,6 +601,11 @@ export default function SimulatorPanel() {
   const [placementMode,  setPlacementMode]  = useState<boolean>(false);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [placedTroops,   setPlacedTroops]   = useState<PlacedTroop[]>([]);
+
+  // ── Spell placement state ────────────────────────────────────────────────
+  const [selectedSpellType,  setSelectedSpellType]  = useState<"rage" | "freeze" | null>(null);
+  const [selectedSpellLevel, setSelectedSpellLevel] = useState<Record<string, number>>({ rage: 1, freeze: 1 });
+  const [placedSpells,       setPlacedSpells]       = useState<PlacedSpell[]>([]);
 
   // ── Replay state ────────────────────────────────────────────────────────────
   const [showReplay,      setShowReplay]      = useState<boolean>(false);
@@ -1123,6 +1138,34 @@ export default function SimulatorPanel() {
     clearResult();
   }
 
+  function handlePlaceSpell(x: number, y: number) {
+    if (!selectedSpellType) return;
+    const level = selectedSpellLevel[selectedSpellType] ?? 1;
+    setPlacedSpells((prev) => [...prev, {
+      instanceId: `ps-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      spellId: selectedSpellType,
+      level,
+      x, y,
+      deployAt: 0,
+    }]);
+    clearResult();
+  }
+
+  function handleRemoveSpell(instanceId: string) {
+    setPlacedSpells((prev) => prev.filter((s) => s.instanceId !== instanceId));
+    clearResult();
+  }
+
+  function handleSelectSpell(id: "rage" | "freeze" | null) {
+    setSelectedSpellType(id);
+    if (id !== null) setSelectedSlotId(null); // mutual exclusion with troop selection
+  }
+
+  function handleSelectSlotWithSpellClear(id: string | null) {
+    setSelectedSlotId(id);
+    if (id !== null) setSelectedSpellType(null);
+  }
+
   function handleUpdateTroopTiming(instanceId: string, deployAt: number) {
     setPlacedTroops((prev) => prev.map((t) =>
       t.instanceId === instanceId ? { ...t, deployAt: Math.max(0, deployAt) } : t
@@ -1309,11 +1352,18 @@ export default function SimulatorPanel() {
       ({ deployments, meta: m } = buildDeployments(troopSlots));
     }
     setMeta(m);
+    const spellPlacements: SpellPlacement[] = placedSpells.map((ps) => ({
+      spellId:  ps.spellId,
+      level:    ps.level,
+      position: { x: ps.x, y: ps.y },
+      deployAt: ps.deployAt,
+    }));
     const r = simulateAttack(
       deployments,
       buildDefensePlacements(placed),
       buildNeutralBuildingPlacements(placedBuildings),
       placedWalls,
+      spellPlacements,
     );
     durationRef.current = r.durationSeconds;
     setResult(r);
@@ -1501,8 +1551,12 @@ export default function SimulatorPanel() {
                 <TroopComposer slots={troopSlots} totalCount={totalTroops} onUpdate={updateTroopSlot} onAdd={addTroopSlot} onRemove={removeTroopSlot} />
               )}
               {placementMode && (
-                <TroopPlacementPanel slots={troopSlots} selectedSlotId={selectedSlotId} onSelectSlot={setSelectedSlotId}
-                  placedTroops={placedTroops} onRemoveTroop={handleRemovePlacedTroop} onUpdateTiming={handleUpdateTroopTiming} />
+                <TroopPlacementPanel slots={troopSlots} selectedSlotId={selectedSlotId} onSelectSlot={handleSelectSlotWithSpellClear}
+                  placedTroops={placedTroops} onRemoveTroop={handleRemovePlacedTroop} onUpdateTiming={handleUpdateTroopTiming}
+                  selectedSpellType={selectedSpellType} selectedSpellLevel={selectedSpellLevel}
+                  onSelectSpell={handleSelectSpell}
+                  onChangeSpellLevel={(id, lv) => setSelectedSpellLevel((prev) => ({ ...prev, [id]: lv }))}
+                  placedSpells={placedSpells} onRemoveSpell={handleRemoveSpell} />
               )}
             </div>
           )}
@@ -1560,6 +1614,10 @@ export default function SimulatorPanel() {
             onRemovePlacedTroop={handleRemovePlacedTroop}
             troopSlots={troopSlots}
             selectedSlotId={selectedSlotId}
+            placedSpells={placedSpells}
+            selectedSpellType={selectedSpellType}
+            onPlaceSpell={handlePlaceSpell}
+            onRemoveSpell={handleRemoveSpell}
             replayDots={replayDots}
             replayDestroyedIds={replayDestroyedIds}
             activeProjectiles={activeProjectiles}
@@ -1971,6 +2029,10 @@ function BattleGrid({
   occupationMap,
   onDragEntityStart,
   onToggleOrientation,
+  placedSpells,
+  selectedSpellType,
+  onPlaceSpell,
+  onRemoveSpell,
 }: {
   placed: PlacedDefense[];
   onPlace: (x: number, y: number, defenseId: string, level: number) => void;
@@ -2019,6 +2081,10 @@ function BattleGrid({
   onPlaceWall?: (x: number, y: number) => void;
   onRemoveWall?: (instanceId: string) => void;
   onWallDragState?: (dragging: boolean) => void;
+  placedSpells?: PlacedSpell[];
+  selectedSpellType?: "rage" | "freeze" | null;
+  onPlaceSpell?: (x: number, y: number) => void;
+  onRemoveSpell?: (instanceId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragCell,          setDragCell]          = useState<string | null>(null);
@@ -2179,6 +2245,12 @@ function BattleGrid({
     if (!c) return;
     if (wallMode) return; // géré entièrement par onMouseDown
     if (placementMode) {
+      if (onPlaceSpell && selectedSpellType) {
+        const existingSpell = placedSpells?.find((s) => s.x === c.x && s.y === c.y);
+        if (existingSpell) { onRemoveSpell?.(existingSpell.instanceId); return; }
+        onPlaceSpell(c.x, c.y);
+        return;
+      }
       const existingTroop = placedTroops?.find((t) => t.x === c.x && t.y === c.y);
       if (existingTroop) { onRemovePlacedTroop?.(existingTroop.instanceId); return; }
       onPlaceTroop?.(c.x, c.y);
@@ -2844,6 +2916,38 @@ function BattleGrid({
             </g>
           );
         })}
+        {/* Placed spells (pre-simulation) */}
+        {placementMode && placedSpells?.map((ps) => {
+          const isRage  = ps.spellId === "rage";
+          const color   = isRage ? "#f97316" : "#06b6d4";
+          const radius  = (isRage ? RAGE_SPELL.radius : FREEZE_SPELL.radius) * cellPx;
+          const cx      = (ps.x + 0.5) * cellPx;
+          const cy      = (ps.y + 0.5) * cellPx;
+          const abbr    = isRage ? "R" : "G";
+          return (
+            <g key={ps.instanceId} style={{ cursor: "pointer" }}
+              onClick={(e) => { e.stopPropagation(); onRemoveSpell?.(ps.instanceId); }}>
+              {/* Zone de rayon semi-transparente */}
+              <circle cx={cx} cy={cy} r={radius}
+                fill={color} fillOpacity={0.13}
+                stroke={color} strokeWidth={1} strokeOpacity={0.55} strokeDasharray="5 3" />
+              {/* Marqueur central */}
+              <circle cx={cx} cy={cy} r={7}
+                fill={color} fillOpacity={0.8}
+                stroke="white" strokeWidth={1.5} strokeOpacity={0.9} />
+              <text x={cx} y={cy + 0.5} textAnchor="middle" dominantBaseline="middle"
+                fontSize={5.5} fontFamily="monospace" fontWeight="bold"
+                fill="white" style={{ pointerEvents: "none", userSelect: "none" }}
+              >{abbr}</text>
+              {/* Niveau */}
+              <text x={cx + 5} y={cy - 4} textAnchor="middle" dominantBaseline="middle"
+                fontSize={3.5} fill={color} fontWeight="bold"
+                style={{ pointerEvents: "none", userSelect: "none" }}
+              >{ps.level}</text>
+            </g>
+          );
+        })}
+
         {/* Selection ring */}
         {selectedId && (() => {
           const def = placed.find((d) => d.instanceId === selectedId);
@@ -3498,6 +3602,8 @@ function CompactBuildingPalette({
 
 function TroopPlacementPanel({
   slots, selectedSlotId, onSelectSlot, placedTroops, onRemoveTroop, onUpdateTiming,
+  selectedSpellType, selectedSpellLevel, onSelectSpell, onChangeSpellLevel,
+  placedSpells, onRemoveSpell,
 }: {
   slots: TroopSlot[];
   selectedSlotId: string | null;
@@ -3505,6 +3611,12 @@ function TroopPlacementPanel({
   placedTroops: PlacedTroop[];
   onRemoveTroop: (id: string) => void;
   onUpdateTiming: (id: string, t: number) => void;
+  selectedSpellType: "rage" | "freeze" | null;
+  selectedSpellLevel: Record<string, number>;
+  onSelectSpell: (id: "rage" | "freeze" | null) => void;
+  onChangeSpellLevel: (spellId: string, level: number) => void;
+  placedSpells: PlacedSpell[];
+  onRemoveSpell: (id: string) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -3537,6 +3649,75 @@ function TroopPlacementPanel({
           {selectedSlotId ? "Cliquer sur la zone dorée pour poser une troupe" : "Aucune troupe sélectionnée"}
         </p>
       </div>
+
+      {/* Sorts */}
+      <div className="space-y-1 border-t border-[#1e2a45] pt-3">
+        <p className="text-xs text-slate-500">Sorts :</p>
+        <div className="flex flex-wrap gap-2">
+          {(["rage", "freeze"] as const).map((spellId) => {
+            const isRage  = spellId === "rage";
+            const sel     = selectedSpellType === spellId;
+            const name    = isRage ? "Rage" : "Gel";
+            const maxLv   = isRage ? RAGE_SPELL.levels.length : FREEZE_SPELL.levels.length;
+            const lv      = selectedSpellLevel[spellId] ?? 1;
+            const selCls  = isRage
+              ? "border-orange-500 bg-orange-500/15 text-orange-300"
+              : "border-cyan-500 bg-cyan-500/15 text-cyan-300";
+            const txtCls  = isRage ? "text-orange-400" : "text-cyan-400";
+            return (
+              <div key={spellId} className="flex items-center gap-1.5">
+                <button
+                  onClick={() => onSelectSpell(sel ? null : spellId)}
+                  className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    sel ? selCls : "border-[#1e2a45] text-slate-400 hover:border-slate-500"
+                  }`}
+                >
+                  <span className={txtCls}>{name}</span>
+                </button>
+                <select
+                  value={lv}
+                  onChange={(e) => onChangeSpellLevel(spellId, Number(e.target.value))}
+                  className="rounded border border-[#1e2a45] bg-[#06080f] px-1 py-0.5 text-xs text-slate-300 focus:outline-none"
+                >
+                  {Array.from({ length: maxLv }, (_, i) => i + 1).map((l) => (
+                    <option key={l} value={l}>Lv{l}</option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-xs text-slate-600">
+          {selectedSpellType
+            ? `Cliquer sur la grille pour poser le sort de ${selectedSpellType === "rage" ? "Rage" : "Gel"}`
+            : "Sélectionner un sort pour le poser"}
+        </p>
+      </div>
+
+      {/* Sorts posés */}
+      {placedSpells.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-slate-500">Sorts posés ({placedSpells.length}) :</p>
+          <div className="max-h-24 overflow-y-auto space-y-1">
+            {placedSpells.map((ps) => {
+              const isRage = ps.spellId === "rage";
+              const color  = isRage ? "text-orange-400" : "text-cyan-400";
+              const name   = isRage ? "Rage" : "Gel";
+              return (
+                <div key={ps.instanceId} className="flex items-center gap-2 rounded-lg bg-[#0d1020] px-2.5 py-1.5 text-xs">
+                  <span className={`font-semibold ${color}`}>{name}</span>
+                  <span className="text-slate-500">Lv{ps.level}</span>
+                  <span className="text-slate-600">({ps.x},{ps.y})</span>
+                  <button
+                    onClick={() => onRemoveSpell(ps.instanceId)}
+                    className="ml-auto text-slate-600 hover:text-rose-400 transition-colors"
+                  >×</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Placed troops list */}
       {placedTroops.length > 0 && (
