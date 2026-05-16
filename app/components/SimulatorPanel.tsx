@@ -21,6 +21,10 @@ import { DEFENSES } from "../../lib/data/defenses";
 import { NEUTRAL_BUILDINGS } from "../../lib/data/neutral-buildings";
 import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
 import { RAGE_SPELL, FREEZE_SPELL, type SpellPlacement } from "../../lib/data/spells";
+import RecognitionCalibrationModal, {
+  type RawRecognizedItem,
+  type CalibrationResult,
+} from "./RecognitionCalibrationModal";
 import type { SimEvent } from "../../lib/engine/events";
 import {
   createBestDeployment,
@@ -603,8 +607,15 @@ export default function SimulatorPanel() {
   const [placedTroops,   setPlacedTroops]   = useState<PlacedTroop[]>([]);
 
   // ── Base recognition state ───────────────────────────────────────────────
-  const [isRecognizing,  setIsRecognizing]  = useState<boolean>(false);
-  const [recognizeError, setRecognizeError] = useState<string | null>(null);
+  const [isRecognizing,   setIsRecognizing]   = useState<boolean>(false);
+  const [recognizeError,  setRecognizeError]  = useState<string | null>(null);
+  const [showCalibration, setShowCalibration] = useState<boolean>(false);
+  const [pendingRec, setPendingRec] = useState<{
+    imageSrc:    string;
+    rawDefenses: RawRecognizedItem[];
+    rawBuildings: RawRecognizedItem[];
+    rawWalls:    { pixelX: number; pixelY: number }[];
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Spell placement state ────────────────────────────────────────────────
@@ -1166,7 +1177,6 @@ export default function SimulatorPanel() {
     setRecognizeError(null);
     try {
       const buffer = await file.arrayBuffer();
-      // btoa on large buffers: use chunks to avoid stack overflow
       const bytes  = new Uint8Array(buffer);
       let binary   = "";
       for (let i = 0; i < bytes.length; i += 8192) {
@@ -1174,6 +1184,7 @@ export default function SimulatorPanel() {
       }
       const base64    = btoa(binary);
       const mediaType = (file.type || "image/jpeg") as "image/png" | "image/jpeg" | "image/webp";
+      const imageSrc  = `data:${mediaType};base64,${base64}`;
 
       const res = await fetch("/api/recognize-base", {
         method:  "POST",
@@ -1186,79 +1197,82 @@ export default function SimulatorPanel() {
       }
 
       const result = await res.json() as {
-        defenses:  { id: string; x: number; y: number; level: number }[];
-        buildings: { id: string; x: number; y: number; level: number }[];
-        walls:     { x: number; y: number }[];
-        validCount: number;
+        rawDefenses:  RawRecognizedItem[];
+        rawBuildings: RawRecognizedItem[];
+        rawWalls:     { pixelX: number; pixelY: number }[];
       };
 
-      const ts = Date.now();
-
-      // Place defenses without overlaps — largest first
-      const defensesSorted = [...result.defenses].sort(
-        (a, b) => entitySize(b.id) - entitySize(a.id),
-      );
-      const newDefenses: PlacedDefense[] = [];
-      let occ = buildOccupation([], [], []);
-      for (const d of defensesSorted) {
-        const sz = entitySize(d.id);
-        if (inBounds(d.x, d.y, sz) && isFree(occ, d.x, d.y, sz)) {
-          newDefenses.push({
-            instanceId: `rec-d-${ts}-${newDefenses.length}`,
-            defenseId:  d.id,
-            level:      d.level,
-            x:          d.x,
-            y:          d.y,
-          });
-          occ = buildOccupation(newDefenses, [], []);
-        }
-      }
-      setPlaced(newDefenses);
-
-      // Place neutral buildings without overlaps — largest first
-      const buildingsSorted = [...result.buildings].sort(
-        (a, b) => entitySize(a.id) - entitySize(b.id),
-      );
-      const newBuildings: PlacedBuilding[] = [];
-      for (const b of buildingsSorted) {
-        const sz = entitySize(b.id);
-        if (inBounds(b.x, b.y, sz) && isFree(occ, b.x, b.y, sz)) {
-          newBuildings.push({
-            instanceId: `rec-b-${ts}-${newBuildings.length}`,
-            buildingId: b.id,
-            level:      b.level,
-            x:          b.x,
-            y:          b.y,
-          });
-          occ = buildOccupation(newDefenses, newBuildings, []);
-        }
-      }
-      setPlacedBuildings(newBuildings);
-
-      // Place walls — deduplicate positions, skip occupied tiles
-      const wallsSeen = new Set<string>();
-      const newWalls: WallPlacement[] = [];
-      for (const w of (result.walls ?? [])) {
-        const key = `${w.x},${w.y}`;
-        if (wallsSeen.has(key)) continue;
-        wallsSeen.add(key);
-        if (isFree(occ, w.x, w.y, 1)) {
-          newWalls.push({
-            instanceId: `rec-w-${ts}-${newWalls.length}`,
-            x: w.x,
-            y: w.y,
-            level: globalWallLevel,
-          });
-        }
-      }
-      setPlacedWalls(newWalls);
-
-      clearResult();
+      setPendingRec({ imageSrc, ...result });
+      setShowCalibration(true);
     } catch (err) {
       setRecognizeError(err instanceof Error ? err.message : "Erreur inconnue");
     } finally {
       setIsRecognizing(false);
     }
+  }
+
+  function handleCalibrationConfirm(calibrated: CalibrationResult) {
+    setShowCalibration(false);
+    setPendingRec(null);
+
+    const ts = Date.now();
+
+    // Place defenses — largest first, no overlaps
+    const defensesSorted = [...calibrated.defenses].sort(
+      (a, b) => entitySize(b.id) - entitySize(a.id),
+    );
+    const newDefenses: PlacedDefense[] = [];
+    let occ = buildOccupation([], [], []);
+    for (const d of defensesSorted) {
+      const sz = entitySize(d.id);
+      if (inBounds(d.x, d.y, sz) && isFree(occ, d.x, d.y, sz)) {
+        newDefenses.push({
+          instanceId: `rec-d-${ts}-${newDefenses.length}`,
+          defenseId:  d.id,
+          level:      d.level,
+          x: d.x, y: d.y,
+        });
+        occ = buildOccupation(newDefenses, [], []);
+      }
+    }
+    setPlaced(newDefenses);
+
+    // Place neutral buildings — largest first, no overlaps
+    const buildingsSorted = [...calibrated.buildings].sort(
+      (a, b) => entitySize(b.id) - entitySize(a.id),
+    );
+    const newBuildings: PlacedBuilding[] = [];
+    for (const b of buildingsSorted) {
+      const sz = entitySize(b.id);
+      if (inBounds(b.x, b.y, sz) && isFree(occ, b.x, b.y, sz)) {
+        newBuildings.push({
+          instanceId: `rec-b-${ts}-${newBuildings.length}`,
+          buildingId: b.id,
+          level:      b.level,
+          x: b.x, y: b.y,
+        });
+        occ = buildOccupation(newDefenses, newBuildings, []);
+      }
+    }
+    setPlacedBuildings(newBuildings);
+
+    // Place walls — deduplicate, no overlaps
+    const wallsSeen = new Set<string>();
+    const newWalls: WallPlacement[] = [];
+    for (const w of calibrated.walls) {
+      const key = `${w.x},${w.y}`;
+      if (wallsSeen.has(key)) continue;
+      wallsSeen.add(key);
+      if (isFree(occ, w.x, w.y, 1)) {
+        newWalls.push({
+          instanceId: `rec-w-${ts}-${newWalls.length}`,
+          x: w.x, y: w.y,
+          level: globalWallLevel,
+        });
+      }
+    }
+    setPlacedWalls(newWalls);
+    clearResult();
   }
 
   function handleSelectSpell(id: "rage" | "freeze" | null) {
@@ -1531,6 +1545,18 @@ export default function SimulatorPanel() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
+
+      {/* Calibration modal */}
+      {showCalibration && pendingRec && (
+        <RecognitionCalibrationModal
+          imageSrc={pendingRec.imageSrc}
+          rawDefenses={pendingRec.rawDefenses}
+          rawBuildings={pendingRec.rawBuildings}
+          rawWalls={pendingRec.rawWalls}
+          onConfirm={handleCalibrationConfirm}
+          onCancel={() => { setShowCalibration(false); setPendingRec(null); }}
+        />
+      )}
 
       {/* Header */}
       <header className="flex items-start justify-between gap-4">
