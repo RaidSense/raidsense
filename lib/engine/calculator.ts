@@ -2168,9 +2168,8 @@ export function simulateAttack(
 
     const hasPendingLightning = [...troops.values()].some(t => t.deathLightningPending.length > 0);
     const allTroopsDead       = [...troops.values()].every((t) => !t.alive);
-    // Consumed traps don't count as "alive targets" for termination.
+    // Traps (triggered or not) are never blocking targets — only active defenses and buildings count.
     const allTargetsDown      = [...defenses.values()].filter(d => !d.isTrap).every(d => !d.alive)
-                             && [...defenses.values()].filter(d => d.isTrap && !d.consumed && d.alive).length === 0
                              && [...buildings.values()].every((b) => !b.alive);
     if ((allTroopsDead && !hasPendingLightning) || allTargetsDown) break;
   }
