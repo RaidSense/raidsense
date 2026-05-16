@@ -602,6 +602,11 @@ export default function SimulatorPanel() {
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [placedTroops,   setPlacedTroops]   = useState<PlacedTroop[]>([]);
 
+  // ── Base recognition state ───────────────────────────────────────────────
+  const [isRecognizing,  setIsRecognizing]  = useState<boolean>(false);
+  const [recognizeError, setRecognizeError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // ── Spell placement state ────────────────────────────────────────────────
   const [selectedSpellType,  setSelectedSpellType]  = useState<"rage" | "freeze" | null>(null);
   const [selectedSpellLevel, setSelectedSpellLevel] = useState<Record<string, number>>({ rage: 1, freeze: 1 });
@@ -1156,6 +1161,59 @@ export default function SimulatorPanel() {
     clearResult();
   }
 
+  async function handleRecognizeBase(file: File) {
+    setIsRecognizing(true);
+    setRecognizeError(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      // btoa on large buffers: use chunks to avoid stack overflow
+      const bytes  = new Uint8Array(buffer);
+      let binary   = "";
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      }
+      const base64    = btoa(binary);
+      const mediaType = (file.type || "image/jpeg") as "image/png" | "image/jpeg" | "image/webp";
+
+      const res = await fetch("/api/recognize-base", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ image: base64, mediaType }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+
+      const result = await res.json() as {
+        defenses:  { id: string; x: number; y: number; level: number }[];
+        buildings: { id: string; x: number; y: number; level: number }[];
+        validCount: number;
+      };
+
+      const ts = Date.now();
+      setPlaced(result.defenses.map((d, i) => ({
+        instanceId: `rec-d-${ts}-${i}`,
+        defenseId:  d.id,
+        level:      d.level,
+        x:          d.x,
+        y:          d.y,
+      })));
+      setPlacedBuildings(result.buildings.map((b, i) => ({
+        instanceId: `rec-b-${ts}-${i}`,
+        buildingId: b.id,
+        level:      b.level,
+        x:          b.x,
+        y:          b.y,
+      })));
+      clearResult();
+    } catch (err) {
+      setRecognizeError(err instanceof Error ? err.message : "Erreur inconnue");
+    } finally {
+      setIsRecognizing(false);
+    }
+  }
+
   function handleSelectSpell(id: "rage" | "freeze" | null) {
     setSelectedSpellType(id);
     if (id !== null) setSelectedSlotId(null); // mutual exclusion with troop selection
@@ -1428,9 +1486,41 @@ export default function SimulatorPanel() {
     <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
 
       {/* Header */}
-      <header className="space-y-1">
-        <h1 className="text-4xl font-bold tracking-tight text-cyan-400">RaidSense</h1>
-        <p className="text-sm text-slate-400">Simulateur d&apos;attaque Clash of Clans</p>
+      <header className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-4xl font-bold tracking-tight text-cyan-400">RaidSense</h1>
+          <p className="text-sm text-slate-400">Simulateur d&apos;attaque Clash of Clans</p>
+        </div>
+
+        {/* Import screenshot */}
+        <div className="flex flex-col items-end gap-1 pt-1">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleRecognizeBase(f);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isRecognizing}
+            className="flex items-center gap-2 rounded-lg border border-cyan-700 bg-cyan-900/30 px-3 py-1.5 text-xs font-semibold text-cyan-300 transition-colors hover:border-cyan-500 hover:bg-cyan-800/40 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isRecognizing ? (
+              <span className="animate-spin">⏳</span>
+            ) : (
+              <span>📷</span>
+            )}
+            {isRecognizing ? "Analyse en cours…" : "Importer screenshot"}
+          </button>
+          {recognizeError && (
+            <p className="text-xs text-rose-400 max-w-xs text-right">{recognizeError}</p>
+          )}
+        </div>
       </header>
 
       {/* ── Panneau entités (tabs, en haut) ─────────────────────────────────── */}
