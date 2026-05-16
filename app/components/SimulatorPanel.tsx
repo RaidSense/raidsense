@@ -2919,7 +2919,7 @@ function BattleGrid({
         {/* Placed spells (pre-simulation) */}
         {placementMode && placedSpells?.map((ps) => {
           const isRage  = ps.spellId === "rage";
-          const color   = isRage ? "#f97316" : "#06b6d4";
+          const color   = isRage ? "#ff8c00" : "#06b6d4";
           const radius  = (isRage ? RAGE_SPELL.radius : FREEZE_SPELL.radius) * cellPx;
           const cx      = (ps.x + 0.5) * cellPx;
           const cy      = (ps.y + 0.5) * cellPx;
@@ -3661,7 +3661,7 @@ function TroopPlacementPanel({
             const maxLv   = isRage ? RAGE_SPELL.levels.length : FREEZE_SPELL.levels.length;
             const lv      = selectedSpellLevel[spellId] ?? 1;
             const selCls  = isRage
-              ? "border-orange-500 bg-orange-500/15 text-orange-300"
+              ? "border-orange-400 bg-orange-500/20 text-orange-400"
               : "border-cyan-500 bg-cyan-500/15 text-cyan-300";
             const txtCls  = isRage ? "text-orange-400" : "text-cyan-400";
             return (
