@@ -536,6 +536,7 @@ export function simulateAttack(
   buildingPlacements: BuildingPlacement[] = [],
   wallPlacements:     WallPlacement[]     = [],
   spells:             SpellPlacement[]    = [],
+  maxSeconds:         number              = MAX_SIM_SECONDS,
 ): SimulationResult {
   if (DEBUG) {
     console.log("%c[SIMULATION] Démarrage — cooldown initial activé pour toutes les défenses (sauf TDE)", "color:#22d3ee;font-weight:bold");
@@ -1098,7 +1099,7 @@ export function simulateAttack(
   }
 
   let lastSimTime = 0;
-  const maxTicks = MAX_SIM_SECONDS * TICKS_PER_SECOND;
+  const maxTicks = Math.min(maxSeconds, MAX_SIM_SECONDS) * TICKS_PER_SECOND;
 
   for (let tick = 1; tick <= maxTicks; tick++) {
     const simTime = tick / TICKS_PER_SECOND;

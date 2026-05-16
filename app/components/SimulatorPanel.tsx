@@ -1373,8 +1373,6 @@ export default function SimulatorPanel() {
     if ((!placed.length && !placedBuildings.length) || !totalTroops) return;
     setIsOptimizing(true);
     setOptimizationResult(null);
-    // Yield to React so the spinner renders before the blocking loop
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     try {
       const templates: TroopTemplate[] = troopSlots.flatMap((slot) =>
         Array.from({ length: slot.count }, (_, i) => ({
@@ -1383,13 +1381,19 @@ export default function SimulatorPanel() {
           level:      slot.level,
         })),
       );
-      const optResult = createBestDeployment(
-        templates,
-        buildDefensePlacements(placed),
-        buildNeutralBuildingPlacements(placedBuildings),
-        { iterations: optIterations, strategy: optStrategy },
-        placedWalls,
-      );
+      const res = await fetch("/api/optimize", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          templates,
+          defenses:  buildDefensePlacements(placed),
+          buildings: buildNeutralBuildingPlacements(placedBuildings),
+          walls:     placedWalls,
+          options:   { iterations: optIterations, strategy: optStrategy },
+        }),
+      });
+      if (!res.ok) throw new Error(`Optimize API error: ${res.status}`);
+      const optResult: OptimizationResult = await res.json();
       setOptimizationResult(optResult);
       // Apply best deployment as manual placement
       const bestTroops: PlacedTroop[] = optResult.best.deployments.map((d) => ({
@@ -1403,6 +1407,8 @@ export default function SimulatorPanel() {
       setPlacedTroops(bestTroops);
       setPlacementMode(true);
       clearResult();
+    } catch (err) {
+      console.error("Optimization failed:", err);
     } finally {
       setIsOptimizing(false);
     }

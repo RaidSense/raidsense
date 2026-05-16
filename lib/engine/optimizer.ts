@@ -38,6 +38,8 @@ export interface OptimizerOptions {
   strategy:        Strategy;
   /** Stop early when this score is reached. Default: Infinity. */
   earlyExitScore?: number;
+  /** Cap per-simulation duration (seconds). Default: 60 for optimizer, 180 full sim. */
+  maxSimSeconds?:  number;
 }
 
 export interface CandidateResult {
@@ -140,6 +142,7 @@ export function createBestDeployment(
     iterations,
     strategy,
     earlyExitScore = Infinity,
+    maxSimSeconds  = 60,
   } = options;
 
   const pool       = getBorderPool();
@@ -157,7 +160,7 @@ export function createBestDeployment(
       deployAt:     t.deployAt ?? 0,
     }));
 
-    const simResult = simulateAttack(deployments, defenses, buildings, walls);
+    const simResult = simulateAttack(deployments, defenses, buildings, walls, [], maxSimSeconds);
     const score     = scoreSimResult(simResult);
 
     candidates.push({ deployments, score, simResult });
