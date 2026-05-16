@@ -1188,24 +1188,71 @@ export default function SimulatorPanel() {
       const result = await res.json() as {
         defenses:  { id: string; x: number; y: number; level: number }[];
         buildings: { id: string; x: number; y: number; level: number }[];
+        walls:     { x: number; y: number }[];
         validCount: number;
       };
 
       const ts = Date.now();
-      setPlaced(result.defenses.map((d, i) => ({
-        instanceId: `rec-d-${ts}-${i}`,
-        defenseId:  d.id,
-        level:      d.level,
-        x:          d.x,
-        y:          d.y,
-      })));
-      setPlacedBuildings(result.buildings.map((b, i) => ({
-        instanceId: `rec-b-${ts}-${i}`,
-        buildingId: b.id,
-        level:      b.level,
-        x:          b.x,
-        y:          b.y,
-      })));
+
+      // Place defenses without overlaps — largest first
+      const defensesSorted = [...result.defenses].sort(
+        (a, b) => entitySize(b.id) - entitySize(a.id),
+      );
+      const newDefenses: PlacedDefense[] = [];
+      let occ = buildOccupation([], [], []);
+      for (const d of defensesSorted) {
+        const sz = entitySize(d.id);
+        if (inBounds(d.x, d.y, sz) && isFree(occ, d.x, d.y, sz)) {
+          newDefenses.push({
+            instanceId: `rec-d-${ts}-${newDefenses.length}`,
+            defenseId:  d.id,
+            level:      d.level,
+            x:          d.x,
+            y:          d.y,
+          });
+          occ = buildOccupation(newDefenses, [], []);
+        }
+      }
+      setPlaced(newDefenses);
+
+      // Place neutral buildings without overlaps — largest first
+      const buildingsSorted = [...result.buildings].sort(
+        (a, b) => entitySize(a.id) - entitySize(b.id),
+      );
+      const newBuildings: PlacedBuilding[] = [];
+      for (const b of buildingsSorted) {
+        const sz = entitySize(b.id);
+        if (inBounds(b.x, b.y, sz) && isFree(occ, b.x, b.y, sz)) {
+          newBuildings.push({
+            instanceId: `rec-b-${ts}-${newBuildings.length}`,
+            buildingId: b.id,
+            level:      b.level,
+            x:          b.x,
+            y:          b.y,
+          });
+          occ = buildOccupation(newDefenses, newBuildings, []);
+        }
+      }
+      setPlacedBuildings(newBuildings);
+
+      // Place walls — deduplicate positions, skip occupied tiles
+      const wallsSeen = new Set<string>();
+      const newWalls: WallPlacement[] = [];
+      for (const w of (result.walls ?? [])) {
+        const key = `${w.x},${w.y}`;
+        if (wallsSeen.has(key)) continue;
+        wallsSeen.add(key);
+        if (isFree(occ, w.x, w.y, 1)) {
+          newWalls.push({
+            instanceId: `rec-w-${ts}-${newWalls.length}`,
+            x: w.x,
+            y: w.y,
+            level: globalWallLevel,
+          });
+        }
+      }
+      setPlacedWalls(newWalls);
+
       clearResult();
     } catch (err) {
       setRecognizeError(err instanceof Error ? err.message : "Erreur inconnue");
