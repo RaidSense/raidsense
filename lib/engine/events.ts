@@ -34,9 +34,11 @@ export type SimEventType =
   | "WALL_DESTROYED"        // wall HP reaches 0
   // Pathfinding
   | "PATH_DECISION"         // troop decided DIRECT or BREAK_WALL
+  // Spell effects
+  | "SPELL_APPLIED"         // spell effect (Rage, …)
+  | "FROZEN_APPLIED"        // Freeze Spell locks an entity until expiresAt
   // Future / extensible
   | "SUMMON"                // (future) troop summoned mid-battle
-  | "SPELL_APPLIED"         // (future) spell effect
   | "HERO_ABILITY"          // (future) hero special ability
   | string;                 // catch-all for forward-compatibility
 

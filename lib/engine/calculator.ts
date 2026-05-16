@@ -7,6 +7,7 @@ import { dijkstraPath, adjacentTilesForFootprint, type PathResult } from "./path
 import { TOWN_HALL_DATA } from "../data/town-halls";
 import { type SimEvent } from "./events";
 import { computePathDecision, type PathDecision, type WallInfo } from "./path-decision";
+import { RAGE_SPELL, FREEZE_SPELL, type SpellPlacement } from "../data/spells";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -340,8 +341,11 @@ interface TroopState {
   deployAt: number;   // seconds — troop activates when simTime reaches this
   isActive: boolean;  // false until deployAt is reached
   // ── TH death-zone debuffs ────────────────────────────────────────────────
-  speedMultiplier:  number;   // 1.0 = normal; reduced by TH slow zones
+  speedMultiplier:  number;   // 1.0 = normal; reduced by TH slow zones, boosted by Rage
   attackMultiplier: number;   // 1.0 = normal; reduced by TH slow zones
+  damageMultiplier: number;   // 1.0 = normal; boosted by Rage Spell
+  isHero:           boolean;  // true for heroes — Rage gives only 50% bonus
+  frozenUntil:      number;   // simTime when freeze expires (-1 = not frozen)
   housingSpace:     number;   // space occupied in army camp (used by spring-trap)
   // ── Path decision ────────────────────────────────────────────────────────
   lastPathDecision: PathDecision | null;  // last decision emitted (to detect changes)
@@ -417,6 +421,7 @@ interface DefenseState {
   tornadoDuration:     number;  // seconds active after trigger
   tornadoDps:          number;  // damage per second while active
   tornadoActiveUntil:  number;  // simTime when effect ends (-1 = inactive, -2 = ended/logged)
+  frozenUntil:         number;  // simTime when freeze expires (-1 = not frozen)
 }
 
 interface WallState {
@@ -530,6 +535,7 @@ export function simulateAttack(
   placements:         DefensePlacement[],
   buildingPlacements: BuildingPlacement[] = [],
   wallPlacements:     WallPlacement[]     = [],
+  spells:             SpellPlacement[]    = [],
 ): SimulationResult {
   if (DEBUG) {
     console.log("%c[SIMULATION] Démarrage — cooldown initial activé pour toutes les défenses (sauf TDE)", "color:#22d3ee;font-weight:bold");
@@ -605,6 +611,9 @@ export function simulateAttack(
       isActive:  (dep.deployAt ?? 0) <= 0,
       speedMultiplier:  1,
       attackMultiplier: 1,
+      damageMultiplier: 1,
+      isHero:           "isHero" in troopData && troopData.isHero === true,
+      frozenUntil:      -1,
       housingSpace:     troopData.housingSpace ?? 1,
       lastPathDecision: null,
     });
@@ -685,6 +694,7 @@ export function simulateAttack(
       tornadoDuration:    levelData.tornadoDuration ?? 0,
       tornadoDps:         levelData.tornadoDps      ?? 0,
       tornadoActiveUntil: -1,
+      frozenUntil:        -1,
       pulseInterval:  defData.pulseInterval ?? 0,
       pulseCooldown:  defData.pulseInterval ?? 0,   // first pulse at t = pulseInterval
       coneAngle:      (defData.coneAngle ?? 0) / 2 * (Math.PI / 180), // store half-cone in radians
@@ -888,6 +898,52 @@ export function simulateAttack(
   // -------------------------------------------------------------------------
   // 4. Simulation loop
   // -------------------------------------------------------------------------
+
+  // ── Rage zones built from spell placements ──────────────────────────────
+  interface RageZone {
+    position:           Vec2;
+    radius:             number;
+    damageBoostPercent: number;
+    speedBoost:         number;  // CoC internal speed units
+    activatesAt:        number;  // simTime (s) when zone becomes active
+    expiresAt:          number;  // simTime (s) when zone expires
+  }
+  // ── Freeze zones built from spell placements ────────────────────────────
+  interface FreezeZone {
+    position:  Vec2;
+    radius:    number;
+    deployAt:  number;
+    duration:  number;
+    applied:   boolean;  // true once snapshot has been taken
+  }
+  const freezeZones: FreezeZone[] = [];
+  for (const sp of spells) {
+    if (sp.spellId !== "freeze") continue;
+    const lvlData = FREEZE_SPELL.levels.find((l) => l.level === sp.level);
+    if (!lvlData) throw new Error(`Freeze Spell level ${sp.level} not found`);
+    freezeZones.push({
+      position: { ...sp.position },
+      radius:   FREEZE_SPELL.radius,
+      deployAt: sp.deployAt,
+      duration: lvlData.durationSeconds,
+      applied:  false,
+    });
+  }
+
+  const rageZones: RageZone[] = [];
+  for (const sp of spells) {
+    if (sp.spellId !== "rage") continue;
+    const lvlData = RAGE_SPELL.levels.find((l) => l.level === sp.level);
+    if (!lvlData) throw new Error(`Rage Spell level ${sp.level} not found`);
+    rageZones.push({
+      position:           { ...sp.position },
+      radius:             RAGE_SPELL.radius,
+      damageBoostPercent: lvlData.damageBoostPercent,
+      speedBoost:         lvlData.speedBoost,
+      activatesAt:        sp.deployAt,
+      expiresAt:          sp.deployAt + RAGE_SPELL.duration,
+    });
+  }
 
   const shots:         ShotEvent[]         = [];
   const heals:         HealEvent[]         = [];
@@ -1241,10 +1297,30 @@ export function simulateAttack(
       }
     }
 
+    // --- Freeze Spell: one-time snapshot at deployAt -------------------------
+    // Freezes defender-side entities (defenses).
+    // Attacker troops are NOT frozen — they are on the player's side.
+    // Defender units (Clan Castle troops) would be frozen here if implemented.
+    for (const fz of freezeZones) {
+      if (fz.applied || simTime < fz.deployAt) continue;
+      fz.applied = true;
+      const expiresAt = fz.deployAt + fz.duration;
+      for (const [id, def] of defenses) {
+        if (!def.alive || def.isTrap) continue;
+        const cx = def.position.x + def.size / 2;
+        const cy = def.position.y + def.size / 2;
+        if (euclidean({ x: cx, y: cy }, fz.position) > fz.radius) continue;
+        def.frozenUntil = Math.max(def.frozenUntil, expiresAt);
+        pushEvent({ time: simTime, type: "FROZEN_APPLIED", targetId: id,
+          extra: { spellId: "freeze", expiresAt } });
+      }
+    }
+
     // --- Defense phase: each defense fires at a troop in range ---------------
 
     for (const def of defenses.values()) {
       if (!def.alive || def.isHidden || def.pulseInterval > 0 || def.isTrap) continue; // Tesla/sweeper/traps skip
+      if (simTime <= def.frozenUntil) continue; // FROZEN
 
       // ── Eagle Artillery burst mechanics ───────────────────────────────────
       // Handled before normal target selection so the burst target is locked
@@ -1433,6 +1509,7 @@ export function simulateAttack(
     // --- Air Sweeper pulse (every 5 s, pushes air troops within 120° cone) ---
     for (const def of defenses.values()) {
       if (!def.alive || def.pulseInterval === 0) continue;
+      if (simTime <= def.frozenUntil) continue; // FROZEN
       def.pulseCooldown -= TICK;
       if (def.pulseCooldown > 0) continue;
       def.pulseCooldown += def.pulseInterval; // += avoids cumulative drift
@@ -1475,6 +1552,7 @@ export function simulateAttack(
 
     for (const troop of troops.values()) {
       if (!troop.alive || !troop.isActive) continue;
+      if (simTime <= troop.frozenUntil) continue; // FROZEN
 
       // ── Healer: soigne les alliés au lieu d'attaquer ─────────────────────
       if (troop.hps > 0) {
@@ -1504,7 +1582,7 @@ export function simulateAttack(
 
         if (distToTarget <= troop.attackRange) {
           // Soin continu chaque tick — troupes au sol non-Healer dans splashRadius autour de la cible.
-          const healPerTick = troop.hps * TICK * healMultiplier;
+          const healPerTick = troop.hps * TICK * healMultiplier * troop.damageMultiplier;
           for (const [, t] of troops) {
             if (!t.alive || !t.isActive || t.hps > 0 || t.isAirUnit) continue;
             if (euclidean(healTarget.position, t.position) <= HEALER_SPLASH_RADIUS) {
@@ -1598,7 +1676,7 @@ export function simulateAttack(
           const isEnragedBD          = troop.troopId === "baby-dragon" && troop.isEnraged;
           const effectiveAttackSpeed = isEnragedBD ? troop.attackSpeed / 1.5 : troop.attackSpeed;
           const effectiveDps         = isEnragedBD ? troop.dps * 2 : troop.dps;
-          const damage               = effectiveDps * effectiveAttackSpeed;
+          const damage               = effectiveDps * effectiveAttackSpeed * troop.damageMultiplier;
 
           if (troop.chainMaxTargets > 0) {
             // ── Electro Dragon : chaîne d'éclairs ────────────────────────────
@@ -1959,7 +2037,7 @@ export function simulateAttack(
 
     // --- TH death-zone: slow + DPS (reset multipliers each tick) -------------
     thDeathZones = thDeathZones.filter((z) => z.endTime > simTime);
-    for (const t of troops.values()) { t.speedMultiplier = 1.0; t.attackMultiplier = 1.0; }
+    for (const t of troops.values()) { t.speedMultiplier = 1.0; t.attackMultiplier = 1.0; t.damageMultiplier = 1.0; }
     for (const zone of thDeathZones) {
       for (const t of troops.values()) {
         if (!t.alive || !t.isActive) continue;
@@ -1973,6 +2051,35 @@ export function simulateAttack(
           t.speedMultiplier  = Math.min(t.speedMultiplier,  zone.slowMultiplier);
           t.attackMultiplier = Math.min(t.attackMultiplier, zone.slowMultiplier);
         }
+      }
+    }
+
+    // --- Rage Spell zones: best bonus per troop (no stacking), then apply ---
+    if (rageZones.length > 0) {
+      const bestDmgBoost = new Map<string, number>();
+      const bestSpdBoost = new Map<string, number>();
+      for (const zone of rageZones) {
+        if (simTime < zone.activatesAt || simTime >= zone.expiresAt) continue;
+        for (const [id, t] of troops) {
+          if (!t.alive || !t.isActive) continue;
+          if (euclidean(t.position, zone.position) > zone.radius) continue;
+          // Siege machines would be excluded here (not yet implemented)
+          const heroFactor = t.isHero ? 0.5 : 1.0;
+          const dmgBoost   = zone.damageBoostPercent * heroFactor;
+          const spdBoost   = zone.speedBoost         * heroFactor;
+          bestDmgBoost.set(id, Math.max(bestDmgBoost.get(id) ?? 0, dmgBoost));
+          bestSpdBoost.set(id, Math.max(bestSpdBoost.get(id) ?? 0, spdBoost));
+        }
+      }
+      for (const [id, t] of troops) {
+        const dmgBoost   = bestDmgBoost.get(id) ?? 0;
+        const spdBoostRaw = bestSpdBoost.get(id) ?? 0;
+        if (dmgBoost === 0) continue;
+        t.damageMultiplier = Math.max(t.damageMultiplier, 1 + dmgBoost / 100);
+        // Convert CoC speed units to engine tiles/s, then apply as multiplier on top of any existing TH slow
+        const spdBoostEng = spdBoostRaw / SPEED_DIVISOR;
+        t.speedMultiplier *= (t.speed + spdBoostEng) / t.speed;
+        pushEvent({ time: simTime, type: "SPELL_APPLIED", sourceId: id, extra: { spellId: "rage" } });
       }
     }
 
