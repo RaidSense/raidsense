@@ -12,11 +12,17 @@ export interface CalibrationResult {
   walls:     { x: number; y: number }[];
 }
 
+// Vraies pointes du losange CoC (44×44 grid)
+//       (0,0)        ← Sommet Haut   (pointe tout en haut)
+//      /     \
+// (0,43)     (43,0)  ← Sommet Droit  (pointe à droite)
+//      \     /       ← Sommet Gauche (pointe à gauche)
+//       (43,43)      ← Sommet Bas    (pointe tout en bas)
 const PRESETS = [
-  { key: "top",    label: "◆ Sommet Haut",   tile: [22,  0] as [number,number], color: "#22d3ee" },
-  { key: "right",  label: "◆ Sommet Droit",  tile: [43, 22] as [number,number], color: "#facc15" },
-  { key: "bottom", label: "◆ Sommet Bas",    tile: [22, 43] as [number,number], color: "#4ade80" },
-  { key: "left",   label: "◆ Sommet Gauche", tile: [ 0, 22] as [number,number], color: "#c084fc" },
+  { key: "top",    label: "◆ Sommet Haut",   tile: [ 0,  0] as [number,number], color: "#22d3ee" },
+  { key: "right",  label: "◆ Sommet Droit",  tile: [43,  0] as [number,number], color: "#facc15" },
+  { key: "bottom", label: "◆ Sommet Bas",    tile: [43, 43] as [number,number], color: "#4ade80" },
+  { key: "left",   label: "◆ Sommet Gauche", tile: [ 0, 43] as [number,number], color: "#c084fc" },
   { key: "center", label: "◆ Centre (HDV)",  tile: [22, 22] as [number,number], color: "#f97316" },
 ] as const;
 type PK = typeof PRESETS[number]["key"];
@@ -67,7 +73,7 @@ export default function RecognitionCalibrationModal({
 
   // React state — only for non-drag UI
   const [presetA, setPresetA] = useState<PK>("top");
-  const [presetB, setPresetB] = useState<PK>("bottom");
+  const [presetB, setPresetB] = useState<PK>("right");
   const [transform, setTransform] = useState<T|null>(null);
   const [hint, setHint] = useState<string>("");
 
