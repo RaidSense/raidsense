@@ -1240,6 +1240,7 @@ export default function SimulatorPanel() {
     const ts = Date.now();
 
     // Place defenses — largest first, snap to nearest free within ±2 tiles
+    // Buildings must stay inside the inner zone (not in the deployment border)
     const defensesSorted = [...calibrated.defenses].sort(
       (a, b) => entitySize(b.id) - entitySize(a.id),
     );
@@ -1247,10 +1248,9 @@ export default function SimulatorPanel() {
     let occ = buildOccupation([], [], []);
     for (const d of defensesSorted) {
       const sz = entitySize(d.id);
-      // Claude reports the visual center; shift to top-left corner
       const off = Math.floor(sz / 2);
-      const cx = Math.max(0, d.x - off);
-      const cy = Math.max(0, d.y - off);
+      const cx = Math.max(DEPLOY_MARGIN, Math.min(GRID_SIZE - DEPLOY_MARGIN - sz, d.x - off));
+      const cy = Math.max(DEPLOY_MARGIN, Math.min(GRID_SIZE - DEPLOY_MARGIN - sz, d.y - off));
       const pos = snapFree(occ, cx, cy, sz);
       if (pos) {
         newDefenses.push({
@@ -1272,8 +1272,8 @@ export default function SimulatorPanel() {
     for (const b of buildingsSorted) {
       const sz = entitySize(b.id);
       const off = Math.floor(sz / 2);
-      const cx = Math.max(0, b.x - off);
-      const cy = Math.max(0, b.y - off);
+      const cx = Math.max(DEPLOY_MARGIN, Math.min(GRID_SIZE - DEPLOY_MARGIN - sz, b.x - off));
+      const cy = Math.max(DEPLOY_MARGIN, Math.min(GRID_SIZE - DEPLOY_MARGIN - sz, b.y - off));
       const pos = snapFree(occ, cx, cy, sz);
       if (pos) {
         newBuildings.push({
@@ -1911,7 +1911,7 @@ export default function SimulatorPanel() {
             Grille {GRID_SIZE}×{GRID_SIZE} &nbsp;·&nbsp;
             {placementMode
               ? `zone dorée = déploiement · ${placedTroops.length} troupe${placedTroops.length !== 1 ? "s" : ""} placée${placedTroops.length !== 1 ? "s" : ""}`
-              : `${placed.length}/${MAX_DEFENSES} défenses`}
+              : `${placed.length} défenses · ${placedBuildings.length} bâtiments · ${placedWalls.length} murs`}
           </p>
         </div>
 
