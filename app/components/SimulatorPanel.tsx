@@ -23,6 +23,7 @@ import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
 import { RAGE_SPELL, FREEZE_SPELL, type SpellPlacement } from "../../lib/data/spells";
 import RecognitionCalibrationModal, {
   type RawRecognizedItem,
+  type RawWallSegment,
   type CalibrationResult,
 } from "./RecognitionCalibrationModal";
 import type { SimEvent } from "../../lib/engine/events";
@@ -611,10 +612,10 @@ export default function SimulatorPanel() {
   const [recognizeError,  setRecognizeError]  = useState<string | null>(null);
   const [showCalibration, setShowCalibration] = useState<boolean>(false);
   const [pendingRec, setPendingRec] = useState<{
-    imageSrc:    string;
-    rawDefenses: RawRecognizedItem[];
-    rawBuildings: RawRecognizedItem[];
-    rawWalls:    { pixelX: number; pixelY: number }[];
+    imageSrc:        string;
+    rawDefenses:     RawRecognizedItem[];
+    rawBuildings:    RawRecognizedItem[];
+    rawWallSegments: RawWallSegment[];
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1197,9 +1198,9 @@ export default function SimulatorPanel() {
       }
 
       const result = await res.json() as {
-        rawDefenses:  RawRecognizedItem[];
-        rawBuildings: RawRecognizedItem[];
-        rawWalls:     { pixelX: number; pixelY: number }[];
+        rawDefenses:     RawRecognizedItem[];
+        rawBuildings:    RawRecognizedItem[];
+        rawWallSegments: RawWallSegment[];
       };
 
       setPendingRec({ imageSrc, ...result });
@@ -1582,7 +1583,7 @@ export default function SimulatorPanel() {
           imageSrc={pendingRec.imageSrc}
           rawDefenses={pendingRec.rawDefenses}
           rawBuildings={pendingRec.rawBuildings}
-          rawWalls={pendingRec.rawWalls}
+          rawWallSegments={pendingRec.rawWallSegments}
           onConfirm={handleCalibrationConfirm}
           onCancel={() => { setShowCalibration(false); setPendingRec(null); }}
         />

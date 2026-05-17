@@ -49,13 +49,18 @@ function calc(pA:{x:number;y:number}, tA:[number,number], pB:{x:number;y:number}
   return {ox:pA.x-(ax-ay)*s, oy:pA.y-(ax+ay)*s*r, s, r};
 }
 
+export interface RawWallSegment {
+  startPixelX: number; startPixelY: number;
+  endPixelX:   number; endPixelY:   number;
+}
+
 interface Props {
   imageSrc:string; rawDefenses:RawRecognizedItem[]; rawBuildings:RawRecognizedItem[];
-  rawWalls:{pixelX:number;pixelY:number}[]; onConfirm:(r:CalibrationResult)=>void; onCancel:()=>void;
+  rawWallSegments: RawWallSegment[]; onConfirm:(r:CalibrationResult)=>void; onCancel:()=>void;
 }
 
 export default function RecognitionCalibrationModal({
-  imageSrc, rawDefenses, rawBuildings, rawWalls, onConfirm, onCancel,
+  imageSrc, rawDefenses, rawBuildings, rawWallSegments, onConfirm, onCancel,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef       = useRef<HTMLImageElement>(null);
@@ -108,13 +113,34 @@ export default function RecognitionCalibrationModal({
         ctx.fillStyle=p.color+"99";ctx.fill();
       });
     }
-    // Wall dots
+    // Wall segments — draw lines on the image
     const ir=imgRectR.current;
-    ctx.fillStyle="rgba(148,163,184,0.4)";
-    rawWalls.slice(0,400).forEach(w=>{
-      const dx=ir.left+(w.pixelX/100)*ir.width, dy=ir.top+(w.pixelY/100)*ir.height;
-      ctx.beginPath();ctx.arc(dx,dy,2,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle="rgba(148,163,184,0.7)";ctx.lineWidth=1.5;
+    ctx.fillStyle="rgba(148,163,184,0.9)";
+    rawWallSegments.forEach(seg=>{
+      const x1=ir.left+(seg.startPixelX/100)*ir.width, y1=ir.top+(seg.startPixelY/100)*ir.height;
+      const x2=ir.left+(seg.endPixelX/100)*ir.width,   y2=ir.top+(seg.endPixelY/100)*ir.height;
+      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+      ctx.beginPath();ctx.arc(x1,y1,2.5,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(x2,y2,2.5,0,Math.PI*2);ctx.fill();
     });
+    // Wall segment preview on isometric grid (interpolated tiles)
+    if(t) {
+      ctx.fillStyle="rgba(148,163,184,0.25)";
+      rawWallSegments.forEach(seg=>{
+        const s=s2t(ir.left+(seg.startPixelX/100)*ir.width, ir.top+(seg.startPixelY/100)*ir.height, t);
+        const e=s2t(ir.left+(seg.endPixelX/100)*ir.width,   ir.top+(seg.endPixelY/100)*ir.height,   t);
+        const dx=e.x-s.x, dy=e.y-s.y;
+        const steps=Math.max(Math.abs(dx),Math.abs(dy));
+        for(let i=0;i<=steps;i++){
+          const tx=Math.max(0,Math.min(43,Math.round(s.x+dx*(steps?i/steps:0))));
+          const ty=Math.max(0,Math.min(43,Math.round(s.y+dy*(steps?i/steps:0))));
+          const [ax,ay]=t2s(tx,ty,t);const[bx,by]=t2s(tx+1,ty,t);
+          const [cx2,cy2]=t2s(tx+1,ty+1,t);const[dx2,dy2]=t2s(tx,ty+1,t);
+          ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.lineTo(cx2,cy2);ctx.lineTo(dx2,dy2);ctx.closePath();ctx.fill();
+        }
+      });
+    }
     // If transform is valid: draw isometric footprint for each detected building
     if(t) {
       [...rawDefenses,...rawBuildings].forEach(item=>{
@@ -150,7 +176,7 @@ export default function RecognitionCalibrationModal({
     // Update React state once (for confirm button / ratio display)
     setTransform(t);
     setHint(t?`échelle ${t.s.toFixed(1)}px · ratio ${t.r.toFixed(2)}`:"Paire invalide");
-  }, [rawDefenses, rawBuildings, rawWalls]);
+  }, [rawDefenses, rawBuildings, rawWallSegments]);
 
   const scheduleDraw = useCallback(() => {
     if(rafPending.current) return;
@@ -224,10 +250,26 @@ export default function RecognitionCalibrationModal({
     function conv(pxPct:number,pyPct:number) {
       return s2t(ir.left+(pxPct/100)*ir.width, ir.top+(pyPct/100)*ir.height, validT);
     }
+    // Expand each wall segment into individual tile positions via linear interpolation
+    function interpolateSegment(seg:RawWallSegment):{x:number;y:number}[] {
+      const s=conv(seg.startPixelX,seg.startPixelY);
+      const e=conv(seg.endPixelX,  seg.endPixelY);
+      const dx=e.x-s.x, dy=e.y-s.y;
+      const steps=Math.max(Math.abs(dx),Math.abs(dy));
+      if(steps===0) return [s];
+      const tiles:{x:number;y:number}[]=[];
+      for(let i=0;i<=steps;i++){
+        const f=i/steps;
+        const tx=Math.max(0,Math.min(43,Math.round(s.x+dx*f)));
+        const ty=Math.max(0,Math.min(43,Math.round(s.y+dy*f)));
+        tiles.push({x:tx,y:ty});
+      }
+      return tiles;
+    }
     onConfirm({
       defenses:  rawDefenses.map(d=>({id:d.id,level:d.level,...conv(d.pixelX,d.pixelY)})),
       buildings: rawBuildings.map(b=>({id:b.id,level:b.level,...conv(b.pixelX,b.pixelY)})),
-      walls:     rawWalls.map(w=>conv(w.pixelX,w.pixelY)),
+      walls:     rawWallSegments.flatMap(seg=>interpolateSegment(seg)),
     });
   }
 
@@ -303,7 +345,7 @@ export default function RecognitionCalibrationModal({
         <div className="px-4 py-2.5 border-t border-[#1e2a45] flex-shrink-0">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-slate-600">
-              {[...rawDefenses,...rawBuildings].length} bâtiments · {rawWalls.length} murs
+              {[...rawDefenses,...rawBuildings].length} bâtiments · {rawWallSegments.length} segments de murs
               {hint?" · "+hint:""}
             </p>
             <div className="flex gap-2">
