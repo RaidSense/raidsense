@@ -609,7 +609,8 @@ export default function SimulatorPanel() {
 
   // ── Base recognition state ───────────────────────────────────────────────
   const [isRecognizing,   setIsRecognizing]   = useState<boolean>(false);
-  const [recognizeError,  setRecognizeError]  = useState<string | null>(null);
+  const [recognizeError,   setRecognizeError]  = useState<string | null>(null);
+  const [recognizeSuccess, setRecognizeSuccess] = useState<string | null>(null);
   const [showCalibration, setShowCalibration] = useState<boolean>(false);
   const [pendingRec, setPendingRec] = useState<{
     imageSrc:        string;
@@ -1212,10 +1213,10 @@ export default function SimulatorPanel() {
     }
   }
 
-  // Finds the closest free position within Chebyshev radius 2 (handles ±2-tile calibration error).
+  // Finds the closest free position within Chebyshev radius 3 (handles ±3-tile calibration error).
   // Searches all candidates at each radius and returns the one with smallest squared distance.
   function snapFree(occ: ReturnType<typeof buildOccupation>, cx: number, cy: number, sz: number) {
-    for (let r = 0; r <= 2; r++) {
+    for (let r = 0; r <= 3; r++) {
       let best: {x:number;y:number}|null = null;
       let bestDist = Infinity;
       for (let dy = -r; dy <= r; dy++) {
@@ -1236,21 +1237,22 @@ export default function SimulatorPanel() {
   function handleCalibrationConfirm(calibrated: CalibrationResult) {
     setShowCalibration(false);
     setPendingRec(null);
+    setRecognizeError(null);
 
     const ts = Date.now();
 
-    // Place defenses — largest first, snap to nearest free within ±2 tiles
-    // Buildings must stay inside the inner zone (not in the deployment border)
-    const defensesSorted = [...calibrated.defenses].sort(
-      (a, b) => entitySize(b.id) - entitySize(a.id),
-    );
+    // Tri stable : taille décroissante, puis position (x,y) comme tiebreaker pour cohérence
+    const defensesSorted = [...calibrated.defenses].sort((a, b) => {
+      const sd = entitySize(b.id) - entitySize(a.id);
+      return sd !== 0 ? sd : (a.x - b.x) || (a.y - b.y);
+    });
     const newDefenses: PlacedDefense[] = [];
     let occ = buildOccupation([], [], []);
     for (const d of defensesSorted) {
-      const sz = entitySize(d.id);
+      const sz  = entitySize(d.id);
       const off = Math.floor(sz / 2);
-      const cx = Math.max(DEPLOY_MARGIN, Math.min(GRID_SIZE - DEPLOY_MARGIN - sz, d.x - off));
-      const cy = Math.max(DEPLOY_MARGIN, Math.min(GRID_SIZE - DEPLOY_MARGIN - sz, d.y - off));
+      const cx  = Math.max(0, Math.min(GRID_SIZE - sz, d.x - off));
+      const cy  = Math.max(0, Math.min(GRID_SIZE - sz, d.y - off));
       const pos = snapFree(occ, cx, cy, sz);
       if (pos) {
         newDefenses.push({
@@ -1264,16 +1266,16 @@ export default function SimulatorPanel() {
     }
     setPlaced(newDefenses);
 
-    // Place neutral buildings — largest first, snap to nearest free within ±2 tiles
-    const buildingsSorted = [...calibrated.buildings].sort(
-      (a, b) => entitySize(b.id) - entitySize(a.id),
-    );
+    const buildingsSorted = [...calibrated.buildings].sort((a, b) => {
+      const sd = entitySize(b.id) - entitySize(a.id);
+      return sd !== 0 ? sd : (a.x - b.x) || (a.y - b.y);
+    });
     const newBuildings: PlacedBuilding[] = [];
     for (const b of buildingsSorted) {
-      const sz = entitySize(b.id);
+      const sz  = entitySize(b.id);
       const off = Math.floor(sz / 2);
-      const cx = Math.max(DEPLOY_MARGIN, Math.min(GRID_SIZE - DEPLOY_MARGIN - sz, b.x - off));
-      const cy = Math.max(DEPLOY_MARGIN, Math.min(GRID_SIZE - DEPLOY_MARGIN - sz, b.y - off));
+      const cx  = Math.max(0, Math.min(GRID_SIZE - sz, b.x - off));
+      const cy  = Math.max(0, Math.min(GRID_SIZE - sz, b.y - off));
       const pos = snapFree(occ, cx, cy, sz);
       if (pos) {
         newBuildings.push({
@@ -1287,7 +1289,6 @@ export default function SimulatorPanel() {
     }
     setPlacedBuildings(newBuildings);
 
-    // Place walls — deduplicate, no overlaps
     const wallsSeen = new Set<string>();
     const newWalls: WallPlacement[] = [];
     for (const w of calibrated.walls) {
@@ -1304,6 +1305,19 @@ export default function SimulatorPanel() {
     }
     setPlacedWalls(newWalls);
     clearResult();
+
+    // Feedback post-placement
+    const totalDetected = calibrated.defenses.length + calibrated.buildings.length;
+    const totalPlaced   = newDefenses.length + newBuildings.length;
+    const skipped = totalDetected - totalPlaced;
+    if (totalPlaced === 0 && totalDetected > 0) {
+      setRecognizeError(`Aucun bâtiment placé sur ${totalDetected} détectés — calibration incorrecte ?`);
+    } else {
+      const msg = `${newDefenses.length} défenses · ${newBuildings.length} bâtiments · ${newWalls.length} murs placés`
+        + (skipped > 0 ? ` (${skipped} ignorés — chevauchement)` : "");
+      setRecognizeSuccess(msg);
+      setTimeout(() => setRecognizeSuccess(null), 6000);
+    }
   }
 
   function handleSelectSpell(id: "rage" | "freeze" | null) {
@@ -1623,6 +1637,9 @@ export default function SimulatorPanel() {
           </button>
           {recognizeError && (
             <p className="text-xs text-rose-400 max-w-xs text-right">{recognizeError}</p>
+          )}
+          {recognizeSuccess && !recognizeError && (
+            <p className="text-xs text-emerald-400 max-w-xs text-right">{recognizeSuccess}</p>
           )}
         </div>
       </header>
