@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 
-export const maxDuration = 90;
+export const maxDuration = 60;
 
 const DEFENSE_IDS = [
   "cannon", "archer-tower", "mortar", "air-defense", "wizard-tower",
@@ -42,32 +42,28 @@ Defenses:  ${DEFENSE_IDS.join(", ")}
 Traps:     ${TRAP_IDS.join(", ")} ← look carefully, they are small and on the ground
 Buildings: ${BUILDING_IDS.join(", ")}
 
-## WALL METHODOLOGY — READ CAREFULLY
-Walls form compartment rings. Instead of listing every tile individually, output WALL RUNS.
-A wall run is a straight connected sequence of wall tiles going in ONE direction:
-  • Direction A: tiles aligned along the NE–SW isometric axis (appears as ↘ diagonal on screen)
-  • Direction B: tiles aligned along the NW–SE isometric axis (appears as ↙ diagonal on screen)
+## WALL METHODOLOGY
+Walls form compartment rings. Output WALL RUNS (straight connected sequences).
+A wall run goes in ONE direction:
+  • NE–SW axis (appears as ↘ diagonal on screen)
+  • NW–SE axis (appears as ↙ diagonal on screen)
 
-For each wall run, output:
-  - startPixelX / startPixelY: center of the FIRST wall tile in the run
-  - endPixelX   / endPixelY:   center of the LAST  wall tile in the run
+For each wall run output:
+  - startPixelX / startPixelY: center of the FIRST wall tile
+  - endPixelX   / endPixelY:   center of the LAST  wall tile
 
-IMPORTANT: Be EXHAUSTIVE. Scan every compartment ring systematically.
-  1. Find each ring of walls (inner, outer, any sub-compartment).
-  2. Trace each ring edge by edge — each straight edge = one wall run entry.
-  3. Don't merge runs that change direction — split at every corner.
-  4. A single isolated wall tile → startPixelX/Y = endPixelX/Y (same point).
+Scan every ring edge by edge. Split at every corner. Single isolated tile → start = end.
 
 ## BUILDING METHODOLOGY
-1. Identify the Town Hall first — most elaborate building, often central.
-2. Identify all defenses and structures visible in the image.
-3. Look carefully for small traps (bomb, spring-trap, etc.) between buildings.
-4. For every item, measure the center of its GROUND FOOTPRINT.
+1. Town Hall first — most elaborate building.
+2. All defenses and structures visible.
+3. Small traps (bomb, spring-trap, etc.) between buildings.
+4. Measure the center of the GROUND FOOTPRINT for every item.
 
 ## RULES
 - Never invent building IDs not in the list above.
 - Include ALL buildings you can see, even if partially visible.
-- If level is unclear, estimate from visual appearance (more ornate = higher).`;
+- If level is unclear, estimate from visual appearance.`;
 
 export async function POST(req: Request) {
   try {
@@ -83,10 +79,10 @@ export async function POST(req: Request) {
 
     const client = new Anthropic({ apiKey });
 
+    // claude-sonnet-4-6 : 3-5× plus rapide qu'Opus, vision comparable pour ce type de tâche
     const response = await client.messages.create({
-      model:      "claude-opus-4-7",
-      max_tokens: 16000,
-      temperature: 0,
+      model:      "claude-sonnet-4-6",
+      max_tokens: 8000,
       system:     SYSTEM_PROMPT,
       tools: [
         {
@@ -111,7 +107,7 @@ export async function POST(req: Request) {
               },
               wall_segments: {
                 type: "array",
-                description: "Wall runs. Each entry is ONE straight connected sequence of wall tiles (same isometric direction). Split at every corner. Be exhaustive — cover every ring.",
+                description: "Wall runs — each entry is one straight sequence of wall tiles. Split at every corner.",
                 items: {
                   type: "object",
                   properties: {
@@ -136,7 +132,7 @@ export async function POST(req: Request) {
             { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
             {
               type: "text",
-              text: "Identify every building, trap, and wall run in this Clash of Clans screenshot. For walls, output RUNS (start + end of each straight segment). Be exhaustive — cover every wall ring completely.",
+              text: "Identify every building, trap, and wall run in this Clash of Clans screenshot. For walls, output RUNS (start + end of each straight segment). Cover every wall ring completely.",
             },
           ],
         },
@@ -145,7 +141,11 @@ export async function POST(req: Request) {
 
     const toolBlock = response.content.find((b) => b.type === "tool_use");
     if (!toolBlock || toolBlock.type !== "tool_use") {
-      return NextResponse.json({ error: "Claude did not return a tool call" }, { status: 500 });
+      const stopReason = response.stop_reason;
+      return NextResponse.json(
+        { error: `Claude n'a pas retourné de données (stop_reason: ${stopReason})` },
+        { status: 500 },
+      );
     }
 
     const input = toolBlock.input as {
@@ -153,7 +153,6 @@ export async function POST(req: Request) {
       wall_segments: { startPixelX: number; startPixelY: number; endPixelX: number; endPixelY: number }[];
     };
 
-    // Split buildings into defenses and neutral buildings, validate IDs
     const rawBuildings = (input.buildings ?? []).filter(b => ALL_IDS.has(b.id));
     const defenseSet   = new Set([...DEFENSE_IDS, ...TRAP_IDS]);
     const buildingSet  = new Set(BUILDING_IDS);
@@ -176,7 +175,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ rawDefenses, rawBuildings: rawNeutral, rawWallSegments });
   } catch (err) {
     console.error("[/api/recognize-base]", err);
-    return NextResponse.json({ error: "Recognition failed" }, { status: 500 });
+    const message = err instanceof Error ? err.message : "Erreur inconnue";
+    return NextResponse.json({ error: `Reconnaissance échouée : ${message}` }, { status: 500 });
   }
 }
 
