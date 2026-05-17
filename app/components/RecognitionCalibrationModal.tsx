@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
+import { entitySize } from "@/lib/data/grid-occupation";
 
 const GRID = 44;
 
@@ -35,8 +36,8 @@ function t2s(tx:number, ty:number, t:T):[number,number] {
 function s2t(px:number, py:number, t:T):{x:number;y:number} {
   const dx=px-t.ox, dy=py-t.oy, sr=t.s*t.r;
   return {
-    x: Math.max(0,Math.min(43,Math.round((dx/t.s+dy/sr)/2))),
-    y: Math.max(0,Math.min(43,Math.round((dy/sr-dx/t.s)/2))),
+    x: Math.max(0,Math.min(43,Math.floor((dx/t.s+dy/sr)/2))),
+    y: Math.max(0,Math.min(43,Math.floor((dy/sr-dx/t.s)/2))),
   };
 }
 function calc(pA:{x:number;y:number}, tA:[number,number], pB:{x:number;y:number}, tB:[number,number]):T|null {
@@ -66,8 +67,8 @@ export default function RecognitionCalibrationModal({
   const liveA    = useRef({x:0,y:0});
   const liveB    = useRef({x:0,y:0});
   const imgRectR = useRef({left:0,top:0,width:0,height:0});
-  const tileAR   = useRef<[number,number]>([22,0]);
-  const tileBR   = useRef<[number,number]>([22,43]);
+  const tileAR   = useRef<[number,number]>([0,0]);   // matches default presetA="top"
+  const tileBR   = useRef<[number,number]>([43,0]);  // matches default presetB="right"
   const dragging = useRef<"a"|"b"|null>(null);
   const rafPending = useRef(false);
 
@@ -114,7 +115,27 @@ export default function RecognitionCalibrationModal({
       const dx=ir.left+(w.pixelX/100)*ir.width, dy=ir.top+(w.pixelY/100)*ir.height;
       ctx.beginPath();ctx.arc(dx,dy,2,0,Math.PI*2);ctx.fill();
     });
-    // Building dots
+    // If transform is valid: draw isometric footprint for each detected building
+    if(t) {
+      [...rawDefenses,...rawBuildings].forEach(item=>{
+        const sx=ir.left+(item.pixelX/100)*ir.width;
+        const sy=ir.top+(item.pixelY/100)*ir.height;
+        const tile=s2t(sx,sy,t);
+        const sz=entitySize(item.id);
+        const off=Math.floor(sz/2);
+        const tx=Math.max(0,Math.min(43,tile.x-off));
+        const ty=Math.max(0,Math.min(43,tile.y-off));
+        // Draw isometric parallelogram (footprint preview)
+        const [ax,ay]=t2s(tx,ty,t);
+        const [bx,by]=t2s(tx+sz,ty,t);
+        const [cx2,cy2]=t2s(tx+sz,ty+sz,t);
+        const [dx2,dy2]=t2s(tx,ty+sz,t);
+        ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.lineTo(cx2,cy2);ctx.lineTo(dx2,dy2);ctx.closePath();
+        ctx.fillStyle="rgba(250,204,21,0.18)";ctx.fill();
+        ctx.strokeStyle="rgba(250,204,21,0.7)";ctx.lineWidth=1;ctx.stroke();
+      });
+    }
+    // Building dots (Claude raw detection — orange)
     [...rawDefenses,...rawBuildings].forEach(item=>{
       const dx=ir.left+(item.pixelX/100)*ir.width, dy=ir.top+(item.pixelY/100)*ir.height;
       ctx.beginPath();ctx.arc(dx,dy,4,0,Math.PI*2);
@@ -147,9 +168,9 @@ export default function RecognitionCalibrationModal({
     // Resize canvas
     const canvas=canvasRef.current;
     if(canvas){canvas.width=con.clientWidth;canvas.height=con.clientHeight;}
-    // Default: A = top tip, B = bottom tip
-    liveA.current={x:rect.left+rect.width*0.50, y:rect.top+rect.height*0.08};
-    liveB.current={x:rect.left+rect.width*0.50, y:rect.top+rect.height*0.90};
+    // Default: A = top tip, B = right tip (matches default presets top+right)
+    liveA.current={x:rect.left+rect.width*0.50, y:rect.top+rect.height*0.06};
+    liveB.current={x:rect.left+rect.width*0.82, y:rect.top+rect.height*0.48};
     // Move handle divs
     if(handleARef.current){handleARef.current.style.left=(liveA.current.x-11)+"px";handleARef.current.style.top=(liveA.current.y-11)+"px";}
     if(handleBRef.current){handleBRef.current.style.left=(liveB.current.x-11)+"px";handleBRef.current.style.top=(liveB.current.y-11)+"px";}
@@ -224,8 +245,9 @@ export default function RecognitionCalibrationModal({
           <h2 className="text-sm font-bold text-cyan-400">Calibrer la grille isométrique</h2>
           <p className="text-xs text-slate-400 mt-0.5">
             Glisse les <b>deux poignées</b> sur des points identifiables de ta base.
-            Choisis des points <b>opposés</b> pour plus de précision.
-            Les <span className="text-orange-400">● orange</span> = bâtiments détectés.
+            Choisis des points <b>non-alignés</b> pour plus de précision.
+            <span className="text-orange-400">● orange</span> = détection Claude ·{" "}
+            <span className="text-yellow-400">◆ jaune</span> = placement final prévu.
           </p>
         </div>
 
@@ -245,7 +267,7 @@ export default function RecognitionCalibrationModal({
 
         {invalidPair&&(
           <div className="px-4 py-1.5 bg-rose-950/50 border-b border-rose-800 flex-shrink-0">
-            <p className="text-xs text-rose-400">⚠ Paire invalide — choisir des points non-alignés (ex : Haut + Bas, Haut + Droit).</p>
+            <p className="text-xs text-rose-400">⚠ Paire invalide — utiliser deux points sur des diagonales différentes. Valides : Haut+Droit, Haut+Gauche, Droit+Bas, Gauche+Bas.</p>
           </div>
         )}
 

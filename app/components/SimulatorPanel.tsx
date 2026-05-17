@@ -1211,13 +1211,34 @@ export default function SimulatorPanel() {
     }
   }
 
+  // Finds the closest free position within Chebyshev radius 2 (handles ±2-tile calibration error).
+  // Searches all candidates at each radius and returns the one with smallest squared distance.
+  function snapFree(occ: ReturnType<typeof buildOccupation>, cx: number, cy: number, sz: number) {
+    for (let r = 0; r <= 2; r++) {
+      let best: {x:number;y:number}|null = null;
+      let bestDist = Infinity;
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // only shell of radius r
+          const x = cx + dx, y = cy + dy;
+          if (inBounds(x, y, sz) && isFree(occ, x, y, sz)) {
+            const d = dx * dx + dy * dy;
+            if (d < bestDist) { best = { x, y }; bestDist = d; }
+          }
+        }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+
   function handleCalibrationConfirm(calibrated: CalibrationResult) {
     setShowCalibration(false);
     setPendingRec(null);
 
     const ts = Date.now();
 
-    // Place defenses — largest first, no overlaps
+    // Place defenses — largest first, snap to nearest free within ±2 tiles
     const defensesSorted = [...calibrated.defenses].sort(
       (a, b) => entitySize(b.id) - entitySize(a.id),
     );
@@ -1225,31 +1246,40 @@ export default function SimulatorPanel() {
     let occ = buildOccupation([], [], []);
     for (const d of defensesSorted) {
       const sz = entitySize(d.id);
-      if (inBounds(d.x, d.y, sz) && isFree(occ, d.x, d.y, sz)) {
+      // Claude reports the visual center; shift to top-left corner
+      const off = Math.floor(sz / 2);
+      const cx = Math.max(0, d.x - off);
+      const cy = Math.max(0, d.y - off);
+      const pos = snapFree(occ, cx, cy, sz);
+      if (pos) {
         newDefenses.push({
           instanceId: `rec-d-${ts}-${newDefenses.length}`,
           defenseId:  d.id,
           level:      d.level,
-          x: d.x, y: d.y,
+          x: pos.x, y: pos.y,
         });
         occ = buildOccupation(newDefenses, [], []);
       }
     }
     setPlaced(newDefenses);
 
-    // Place neutral buildings — largest first, no overlaps
+    // Place neutral buildings — largest first, snap to nearest free within ±2 tiles
     const buildingsSorted = [...calibrated.buildings].sort(
       (a, b) => entitySize(b.id) - entitySize(a.id),
     );
     const newBuildings: PlacedBuilding[] = [];
     for (const b of buildingsSorted) {
       const sz = entitySize(b.id);
-      if (inBounds(b.x, b.y, sz) && isFree(occ, b.x, b.y, sz)) {
+      const off = Math.floor(sz / 2);
+      const cx = Math.max(0, b.x - off);
+      const cy = Math.max(0, b.y - off);
+      const pos = snapFree(occ, cx, cy, sz);
+      if (pos) {
         newBuildings.push({
           instanceId: `rec-b-${ts}-${newBuildings.length}`,
           buildingId: b.id,
           level:      b.level,
-          x: b.x, y: b.y,
+          x: pos.x, y: pos.y,
         });
         occ = buildOccupation(newDefenses, newBuildings, []);
       }

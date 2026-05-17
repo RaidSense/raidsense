@@ -27,10 +27,18 @@ Identify every building, trap, and wall tile in this screenshot.
 For each one, output its CENTER position as a percentage of the image dimensions.
 
 ## OUTPUT FORMAT
-- pixelX: percentage of image WIDTH  where the building CENTER appears (0 = left edge, 100 = right edge)
-- pixelY: percentage of image HEIGHT where the building CENTER appears (0 = top edge, 100 = bottom edge)
+- pixelX: percentage of image WIDTH  (0 = left edge, 100 = right edge)
+- pixelY: percentage of image HEIGHT (0 = top edge, 100 = bottom edge)
 - Do NOT estimate tile coordinates — output pixel percentages ONLY.
 - The calibration step will convert pixel positions to tile coordinates.
+
+## CRITICAL — WHERE TO MEASURE
+This is an ISOMETRIC (3D perspective) screenshot. Buildings have height and cast shadows.
+You MUST report the center of the TILE FOOTPRINT at GROUND LEVEL, NOT the visual center of the 3D model.
+- Imagine looking straight down at the base of the building where it touches the ground.
+- For a 3×3 building: report the center of the 3×3 tile square on the ground, not the top of the roof.
+- The tile footprint is always a diamond-shaped area at the bottom of the building sprite.
+- Typically the correct point is near the BOTTOM of the building's visual sprite (the base/foundation).
 
 ## VALID BUILDING IDs (use EXACTLY these strings)
 Defenses:  ${DEFENSE_IDS.join(", ")}
@@ -42,13 +50,14 @@ Buildings: ${BUILDING_IDS.join(", ")}
 2. Identify all defenses and structures visible in the image.
 3. Look carefully for small traps (bomb, spring-trap, etc.) between buildings.
 4. Identify wall tiles — they form ring/compartment shapes. Output each visible wall tile.
-5. For every item, measure its center in % of image width and height.
+5. For every item, measure the center of its GROUND FOOTPRINT (base of the 3D model, not the top).
 
 ## RULES
 - Never invent IDs not in the list above.
 - Include ALL buildings you can see, even if partially visible.
 - For walls: output individual tile centers — each wall tile is a separate entry.
-- If level is unclear, estimate from visual appearance (more ornate = higher).`;
+- If level is unclear, estimate from visual appearance (more ornate = higher).
+- Remember: always report GROUND-LEVEL footprint centers, not 3D visual centers.`;
 
 export async function POST(req: Request) {
   try {
