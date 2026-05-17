@@ -63,18 +63,17 @@ function calcN(pts:{px:{x:number;y:number};tile:[number,number]}[]):T|null {
   return {ox,oy,s,r:sr/s};
 }
 
-export interface RawWallSegment {
-  startPixelX: number; startPixelY: number;
-  endPixelX:   number; endPixelY:   number;
+export interface RawWallRing {
+  corners: { pixelX: number; pixelY: number }[];
 }
 
 interface Props {
   imageSrc:string; rawDefenses:RawRecognizedItem[]; rawBuildings:RawRecognizedItem[];
-  rawWallSegments: RawWallSegment[]; onConfirm:(r:CalibrationResult)=>void; onCancel:()=>void;
+  rawWallRings: RawWallRing[]; onConfirm:(r:CalibrationResult)=>void; onCancel:()=>void;
 }
 
 export default function RecognitionCalibrationModal({
-  imageSrc, rawDefenses, rawBuildings, rawWallSegments, onConfirm, onCancel,
+  imageSrc, rawDefenses, rawBuildings, rawWallRings, onConfirm, onCancel,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef       = useRef<HTMLImageElement>(null);
@@ -132,33 +131,37 @@ export default function RecognitionCalibrationModal({
       });
     }
 
-    // Segments de murs sur l'image
+    // Anneaux de murs sur l'image (polygone entre les coins)
     const ir=imgRectR.current;
-    ctx.strokeStyle="rgba(148,163,184,0.7)";ctx.lineWidth=1.5;
-    ctx.fillStyle="rgba(148,163,184,0.9)";
-    rawWallSegments.forEach(seg=>{
-      const x1=ir.left+(seg.startPixelX/100)*ir.width,y1=ir.top+(seg.startPixelY/100)*ir.height;
-      const x2=ir.left+(seg.endPixelX/100)*ir.width,  y2=ir.top+(seg.endPixelY/100)*ir.height;
-      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
-      ctx.beginPath();ctx.arc(x1,y1,2.5,0,Math.PI*2);ctx.fill();
-      ctx.beginPath();ctx.arc(x2,y2,2.5,0,Math.PI*2);ctx.fill();
+    rawWallRings.forEach(ring=>{
+      const pts=ring.corners.map(c=>({x:ir.left+(c.pixelX/100)*ir.width,y:ir.top+(c.pixelY/100)*ir.height}));
+      if(pts.length<2) return;
+      ctx.strokeStyle="rgba(148,163,184,0.7)";ctx.lineWidth=1.5;
+      ctx.fillStyle="rgba(148,163,184,0.9)";
+      ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);
+      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y);
+      ctx.closePath();ctx.stroke();
+      pts.forEach(p=>{ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();});
     });
 
     if(t){
-      // Aperçu tuiles de murs sur la grille isométrique
+      // Aperçu tuiles de murs sur la grille isométrique (périmètre de chaque anneau)
       ctx.fillStyle="rgba(148,163,184,0.22)";
-      rawWallSegments.forEach(seg=>{
-        const s=s2t(ir.left+(seg.startPixelX/100)*ir.width,ir.top+(seg.startPixelY/100)*ir.height,t);
-        const e=s2t(ir.left+(seg.endPixelX/100)*ir.width,  ir.top+(seg.endPixelY/100)*ir.height,  t);
-        const dx=e.x-s.x,dy=e.y-s.y;
-        const steps=Math.max(Math.abs(dx),Math.abs(dy));
-        for(let i=0;i<=steps;i++){
-          const f=steps?i/steps:0;
-          const tx=Math.max(0,Math.min(43,Math.round(s.x+dx*f)));
-          const ty=Math.max(0,Math.min(43,Math.round(s.y+dy*f)));
-          const[ax,ay]=t2s(tx,ty,t);const[bx,by]=t2s(tx+1,ty,t);
-          const[cx2,cy2]=t2s(tx+1,ty+1,t);const[dx2,dy2]=t2s(tx,ty+1,t);
-          ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.lineTo(cx2,cy2);ctx.lineTo(dx2,dy2);ctx.closePath();ctx.fill();
+      rawWallRings.forEach(ring=>{
+        const tilePts=ring.corners.map(c=>s2t(ir.left+(c.pixelX/100)*ir.width,ir.top+(c.pixelY/100)*ir.height,t));
+        const n=tilePts.length;
+        for(let ei=0;ei<n;ei++){
+          const a=tilePts[ei],b=tilePts[(ei+1)%n];
+          const dx=b.x-a.x,dy=b.y-a.y;
+          const steps=Math.max(Math.abs(dx),Math.abs(dy));
+          for(let i=0;i<=steps;i++){
+            const f=steps?i/steps:0;
+            const tx=Math.max(0,Math.min(43,Math.round(a.x+dx*f)));
+            const ty=Math.max(0,Math.min(43,Math.round(a.y+dy*f)));
+            const[ax2,ay2]=t2s(tx,ty,t);const[bx2,by2]=t2s(tx+1,ty,t);
+            const[cx2,cy2]=t2s(tx+1,ty+1,t);const[dx2,dy2]=t2s(tx,ty+1,t);
+            ctx.beginPath();ctx.moveTo(ax2,ay2);ctx.lineTo(bx2,by2);ctx.lineTo(cx2,cy2);ctx.lineTo(dx2,dy2);ctx.closePath();ctx.fill();
+          }
         }
       });
       // Aperçu footprints bâtiments (parallelogrammes jaunes)
@@ -196,7 +199,7 @@ export default function RecognitionCalibrationModal({
 
     setTransform(t);
     setHint(t?`échelle ${t.s.toFixed(1)}px/tile · ratio ${t.r.toFixed(2)}`:"Points invalides");
-  },[rawDefenses,rawBuildings,rawWallSegments]);
+  },[rawDefenses,rawBuildings,rawWallRings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scheduleDraw=useCallback(()=>{
     if(rafPending.current) return;
@@ -269,23 +272,26 @@ export default function RecognitionCalibrationModal({
     function conv(pxPct:number,pyPct:number){
       return s2t(ir.left+(pxPct/100)*ir.width,ir.top+(pyPct/100)*ir.height,validT);
     }
-    function interpolateSegment(seg:RawWallSegment):{x:number;y:number}[]{
-      const s=conv(seg.startPixelX,seg.startPixelY);
-      const e=conv(seg.endPixelX,  seg.endPixelY);
-      const dx=e.x-s.x,dy=e.y-s.y;
-      const steps=Math.max(Math.abs(dx),Math.abs(dy));
-      if(steps===0) return [s];
-      const tiles:{x:number;y:number}[]=[];
-      for(let i=0;i<=steps;i++){
-        const f=i/steps;
-        tiles.push({x:Math.max(0,Math.min(43,Math.round(s.x+dx*f))),y:Math.max(0,Math.min(43,Math.round(s.y+dy*f)))});
+    // Rasterise an ring: trace all edges corner[i]→corner[i+1]→...→corner[0]
+    function rasterizeRing(ring:RawWallRing):{x:number;y:number}[]{
+      const tilePts=ring.corners.map(c=>conv(c.pixelX,c.pixelY));
+      const n=tilePts.length;
+      const out:{x:number;y:number}[]=[];
+      for(let ei=0;ei<n;ei++){
+        const a=tilePts[ei],b=tilePts[(ei+1)%n];
+        const dx=b.x-a.x,dy=b.y-a.y;
+        const steps=Math.max(Math.abs(dx),Math.abs(dy));
+        for(let i=0;i<=steps;i++){
+          const f=steps?i/steps:0;
+          out.push({x:Math.max(0,Math.min(43,Math.round(a.x+dx*f))),y:Math.max(0,Math.min(43,Math.round(a.y+dy*f)))});
+        }
       }
-      return tiles;
+      return out;
     }
     onConfirm({
       defenses:  rawDefenses.map(d=>({id:d.id,level:d.level,...conv(d.pixelX,d.pixelY)})),
       buildings: rawBuildings.map(b=>({id:b.id,level:b.level,...conv(b.pixelX,b.pixelY)})),
-      walls:     rawWallSegments.flatMap(seg=>interpolateSegment(seg)),
+      walls:     rawWallRings.flatMap(ring=>rasterizeRing(ring)),
     });
   }
 
@@ -355,7 +361,7 @@ export default function RecognitionCalibrationModal({
         <div className="px-4 py-2.5 border-t border-[#1e2a45] flex-shrink-0">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-slate-600">
-              {[...rawDefenses,...rawBuildings].length} bâtiments · {rawWallSegments.length} segments de murs
+              {[...rawDefenses,...rawBuildings].length} bâtiments · {rawWallRings.length} anneaux de murs
               {hint?" · "+hint:""}
             </p>
             <div className="flex gap-2">

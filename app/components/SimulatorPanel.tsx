@@ -23,7 +23,7 @@ import { simulateAttack, PROJECTILE_SPEED } from "../../lib/engine/calculator";
 import { RAGE_SPELL, FREEZE_SPELL, type SpellPlacement } from "../../lib/data/spells";
 import RecognitionCalibrationModal, {
   type RawRecognizedItem,
-  type RawWallSegment,
+  type RawWallRing,
   type CalibrationResult,
 } from "./RecognitionCalibrationModal";
 import type { SimEvent } from "../../lib/engine/events";
@@ -616,7 +616,7 @@ export default function SimulatorPanel() {
     imageSrc:        string;
     rawDefenses:     RawRecognizedItem[];
     rawBuildings:    RawRecognizedItem[];
-    rawWallSegments: RawWallSegment[];
+    rawWallRings: RawWallRing[];
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1201,7 +1201,7 @@ export default function SimulatorPanel() {
       const result = await res.json() as {
         rawDefenses:     RawRecognizedItem[];
         rawBuildings:    RawRecognizedItem[];
-        rawWallSegments: RawWallSegment[];
+        rawWallRings: RawWallRing[];
       };
 
       setPendingRec({ imageSrc, ...result });
@@ -1597,7 +1597,7 @@ export default function SimulatorPanel() {
           imageSrc={pendingRec.imageSrc}
           rawDefenses={pendingRec.rawDefenses}
           rawBuildings={pendingRec.rawBuildings}
-          rawWallSegments={pendingRec.rawWallSegments}
+          rawWallRings={pendingRec.rawWallRings}
           onConfirm={handleCalibrationConfirm}
           onCancel={() => { setShowCalibration(false); setPendingRec(null); }}
         />

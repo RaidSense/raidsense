@@ -20,50 +20,63 @@ const BUILDING_IDS = [
 ];
 const ALL_IDS = new Set([...DEFENSE_IDS, ...TRAP_IDS, ...BUILDING_IDS]);
 
-const SYSTEM_PROMPT = `You are an expert Clash of Clans base analyst.
+const SYSTEM_PROMPT = `You are an expert Clash of Clans base analyst working with isometric screenshots.
 
-## YOUR TASK
-Identify every building, trap, and wall segment in this screenshot.
+## PIXEL PERCENTAGE FORMAT
+For every position report:
+- pixelX: X as % of image width  (0 = left edge, 100 = right edge)
+- pixelY: Y as % of image height (0 = top  edge, 100 = bottom edge)
+Never estimate tile coordinates — always output pixel percentages.
 
-## OUTPUT FORMAT (pixel percentages)
-- pixelX: percentage of image WIDTH  (0 = left edge, 100 = right edge)
-- pixelY: percentage of image HEIGHT (0 = top edge, 100 = bottom edge)
-- Do NOT estimate tile coordinates — output pixel percentages ONLY.
+## HOW TO FIND A BUILDING'S CENTER (critical for accuracy)
+CoC uses ISOMETRIC 3D perspective. Buildings have height. Their true ground position
+is LOWER in the image than their visual center.
 
-## CRITICAL — WHERE TO MEASURE (buildings)
-This is an ISOMETRIC (3D perspective) screenshot. Buildings have height and cast shadows.
-You MUST report the center of the TILE FOOTPRINT at GROUND LEVEL, NOT the visual center of the 3D model.
-- For a 3×3 building: report the center of the 3×3 tile square on the ground, not the top of the roof.
-- The tile footprint is always a diamond-shaped area at the bottom of the building sprite.
-- Typically the correct point is near the BOTTOM of the building's visual sprite (the base/foundation).
+Rule: place your cursor at the BOTTOM-CENTER of the building sprite — specifically
+where the base/foundation meets the ground plane. This diamond-shaped ground area
+is the tile footprint.
+- Cannon (3×3): the center of the circular base at ground level
+- Inferno Tower (2×2): center of the small square platform at ground
+- Eagle Artillery (4×4): center of the large square base at ground
+- Town Hall (4×4): center of the ornate base at ground (ignore the spire height)
+- Walls: center of the small diamond tile at ground level
 
 ## VALID BUILDING IDs (use EXACTLY these strings)
-Defenses:  ${DEFENSE_IDS.join(", ")}
-Traps:     ${TRAP_IDS.join(", ")} ← look carefully, they are small and on the ground
-Buildings: ${BUILDING_IDS.join(", ")}
+Defenses: ${DEFENSE_IDS.join(", ")}
+Traps:    ${TRAP_IDS.join(", ")}
+Buildings:${BUILDING_IDS.join(", ")}
 
-## WALL METHODOLOGY
-Walls form compartment rings. Output WALL RUNS (straight connected sequences).
-A wall run goes in ONE direction:
-  • NE–SW axis (appears as ↘ diagonal on screen)
-  • NW–SE axis (appears as ↙ diagonal on screen)
+## BUILDING DETECTION STRATEGY
+Work systematically — largest buildings first, then smaller:
+1. Town Hall (largest, most elaborate, often center)
+2. Eagle Artillery / Scattershot / Monolith (massive platforms)
+3. X-Bow, Inferno Tower, Wizard Tower, Air Defense, Mortar, Cannon, Archer Tower
+4. Bomb Tower, Hidden Tesla, Air Sweeper, Builder Hut
+5. Clan Castle, Army Camp, Barracks (large neutral buildings)
+6. Storage buildings, Laboratories, Factories
+7. Traps (small, ground-level: bomb, spring-trap, giant-bomb, air-bomb, seeking-air-mine, tornado-trap)
 
-For each wall run output:
-  - startPixelX / startPixelY: center of the FIRST wall tile
-  - endPixelX   / endPixelY:   center of the LAST  wall tile
+## WALL DETECTION STRATEGY — OUTPUT RING CORNERS
+Do NOT list every wall tile. Instead, identify each WALL RING as a sequence of CORNER POINTS.
+A corner is a point where the wall changes direction (turning point of the ring).
 
-Scan every ring edge by edge. Split at every corner. Single isolated tile → start = end.
+For each ring:
+- Most rings are rectangular → 4 corners
+- L-shaped rings → 6 corners
+- Complex rings → more corners
+- Output corners in order (clockwise or counter-clockwise)
+- Each corner pixelX/Y should point to the CENTER of the wall tile at that corner
 
-## BUILDING METHODOLOGY
-1. Town Hall first — most elaborate building.
-2. All defenses and structures visible.
-3. Small traps (bomb, spring-trap, etc.) between buildings.
-4. Measure the center of the GROUND FOOTPRINT for every item.
+Examples of corner detection:
+- Find the top-most wall tile of a ring → that tile's center = top corner
+- Find where the ring turns from going NE→NW → that tile = a corner
+- Trace around the entire ring perimeter
 
 ## RULES
-- Never invent building IDs not in the list above.
-- Include ALL buildings you can see, even if partially visible.
-- If level is unclear, estimate from visual appearance.`;
+- Never invent IDs not in the list above
+- Include ALL visible buildings, even partially visible ones
+- If level is unclear: estimate from ornament complexity (more ornate = higher level)
+- For Hidden Tesla: it may appear as a trapdoor/inactive — still report it`;
 
 export async function POST(req: Request) {
   try {
@@ -79,7 +92,6 @@ export async function POST(req: Request) {
 
     const client = new Anthropic({ apiKey });
 
-    // claude-sonnet-4-6 : 3-5× plus rapide qu'Opus, vision comparable pour ce type de tâche
     const response = await client.messages.create({
       model:      "claude-sonnet-4-6",
       max_tokens: 8000,
@@ -87,40 +99,49 @@ export async function POST(req: Request) {
       tools: [
         {
           name:        "report_base",
-          description: "Report all buildings, traps, and wall runs with their pixel percentage positions.",
+          description: "Report all buildings, traps, and wall rings with their pixel percentage positions.",
           input_schema: {
             type: "object",
             properties: {
               buildings: {
                 type: "array",
-                description: "All defenses, traps, and non-wall buildings.",
+                description: "All defenses, traps, and non-wall buildings. Ground footprint center.",
                 items: {
                   type: "object",
                   properties: {
-                    id:     { type: "string",  description: "Exact building ID." },
+                    id:     { type: "string",  description: "Exact building ID from the valid list." },
                     pixelX: { type: "number",  description: "Ground footprint center X as % of image width (0–100)." },
-                    pixelY: { type: "number",  description: "Ground footprint center Y as % of image height (0–100)." },
+                    pixelY: { type: "number",  description: "Ground footprint center Y as % of image height (0–100). Should be at the BASE of the building, not its visual midpoint." },
                     level:  { type: "integer", description: "Estimated level (1–20)." },
                   },
                   required: ["id", "pixelX", "pixelY", "level"],
                 },
               },
-              wall_segments: {
+              wall_rings: {
                 type: "array",
-                description: "Wall runs — each entry is one straight sequence of wall tiles. Split at every corner.",
+                description: "Each entry is ONE wall ring (compartment). Output the CORNER POINTS of each ring in order. A corner is where the wall changes direction.",
                 items: {
                   type: "object",
                   properties: {
-                    startPixelX: { type: "number", description: "First tile center X as % of image width (0–100)." },
-                    startPixelY: { type: "number", description: "First tile center Y as % of image height (0–100)." },
-                    endPixelX:   { type: "number", description: "Last tile center X as % of image width (0–100)." },
-                    endPixelY:   { type: "number", description: "Last tile center Y as % of image height (0–100)." },
+                    corners: {
+                      type: "array",
+                      description: "Corner points of this ring, in order. Each corner = center of the wall tile at that turning point.",
+                      items: {
+                        type: "object",
+                        properties: {
+                          pixelX: { type: "number", description: "Corner tile center X as % of image width (0–100)." },
+                          pixelY: { type: "number", description: "Corner tile center Y as % of image height (0–100)." },
+                        },
+                        required: ["pixelX", "pixelY"],
+                      },
+                      minItems: 2,
+                    },
                   },
-                  required: ["startPixelX", "startPixelY", "endPixelX", "endPixelY"],
+                  required: ["corners"],
                 },
               },
             },
-            required: ["buildings", "wall_segments"],
+            required: ["buildings", "wall_rings"],
           },
         },
       ],
@@ -132,7 +153,7 @@ export async function POST(req: Request) {
             { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
             {
               type: "text",
-              text: "Identify every building, trap, and wall run in this Clash of Clans screenshot. For walls, output RUNS (start + end of each straight segment). Cover every wall ring completely.",
+              text: "Analyze this Clash of Clans base. Report every building and trap (ground footprint center), and every wall ring (corner points only, not individual tiles). Be systematic: largest buildings first, then traces each wall ring corner by corner.",
             },
           ],
         },
@@ -143,14 +164,14 @@ export async function POST(req: Request) {
     if (!toolBlock || toolBlock.type !== "tool_use") {
       const stopReason = response.stop_reason;
       return NextResponse.json(
-        { error: `Claude n'a pas retourné de données (stop_reason: ${stopReason})` },
+        { error: `Reconnaissance échouée (stop: ${stopReason}) — réessaie` },
         { status: 500 },
       );
     }
 
     const input = toolBlock.input as {
-      buildings:     { id: string; pixelX: number; pixelY: number; level: number }[];
-      wall_segments: { startPixelX: number; startPixelY: number; endPixelX: number; endPixelY: number }[];
+      buildings:  { id: string; pixelX: number; pixelY: number; level: number }[];
+      wall_rings: { corners: { pixelX: number; pixelY: number }[] }[];
     };
 
     const rawBuildings = (input.buildings ?? []).filter(b => ALL_IDS.has(b.id));
@@ -165,14 +186,16 @@ export async function POST(req: Request) {
       .filter(b => buildingSet.has(b.id))
       .map(b => ({ id: b.id, pixelX: clamp(b.pixelX), pixelY: clamp(b.pixelY), level: clampLv(b.level) }));
 
-    const rawWallSegments = (input.wall_segments ?? []).map(s => ({
-      startPixelX: clamp(s.startPixelX),
-      startPixelY: clamp(s.startPixelY),
-      endPixelX:   clamp(s.endPixelX),
-      endPixelY:   clamp(s.endPixelY),
-    }));
+    const rawWallRings = (input.wall_rings ?? [])
+      .filter(r => r.corners && r.corners.length >= 2)
+      .map(r => ({
+        corners: r.corners.map(c => ({
+          pixelX: clamp(c.pixelX),
+          pixelY: clamp(c.pixelY),
+        })),
+      }));
 
-    return NextResponse.json({ rawDefenses, rawBuildings: rawNeutral, rawWallSegments });
+    return NextResponse.json({ rawDefenses, rawBuildings: rawNeutral, rawWallRings });
   } catch (err) {
     console.error("[/api/recognize-base]", err);
     const message = err instanceof Error ? err.message : "Erreur inconnue";
